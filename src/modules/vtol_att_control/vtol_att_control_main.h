@@ -88,6 +88,8 @@
 #include "tailsitter.h"
 #include "tiltrotor.h"
 #include "vtol_type.h"
+#include "abc_vtol.h"
+#include "abc_vtol_4r.h"
 
 using namespace time_literals;
 

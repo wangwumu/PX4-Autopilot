@@ -593,3 +593,18 @@ float VtolType::getBlendAirspeed() const
 {
 	return _param_vt_arsp_blend.get();
 }
+
+float VtolType::getTransitionToFwAirspeed() const
+{
+	// Since the stall airspeed increases with vehicle weight, we increase the transition airspeed
+	// by the same factor.
+
+	float weight_ratio = 1.0f;
+
+	if (_param_weight_base.get() > FLT_EPSILON && _param_weight_gross.get() > FLT_EPSILON) {
+		weight_ratio = math::constrain(_param_weight_gross.get() /
+					       _param_weight_base.get(), kMinWeightRatio, kMaxWeightRatio);
+	}
+
+	return sqrtf(weight_ratio) * _param_vt_arsp_trans.get();
+}

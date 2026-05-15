@@ -137,6 +137,8 @@ if(CONFIG_MODULES_VTOL_ATT_CONTROL)
 		13100_generic_vtol_tiltrotor
 		13030_generic_vtol_quad_tiltrotor
 		13200_generic_vtol_tailsitter
+		13888_abc_vtol
+		13888_abc_vtol_4r
 	)
 endif()
 

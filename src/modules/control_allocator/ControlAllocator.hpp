@@ -54,6 +54,8 @@
 #include <ActuatorEffectivenessHelicopter.hpp>
 #include <ActuatorEffectivenessHelicopterCoaxial.hpp>
 #include <ActuatorEffectivenessSpacecraft.hpp>
+#include <ActuatorEffectivenessAbcVtol.hpp>
+#include <ActuatorEffectivenessAbcVtol4R.hpp>
 
 #include <ControlAllocation.hpp>
 #include <ControlAllocationPseudoInverse.hpp>
@@ -159,8 +161,11 @@ private:
 		HELICOPTER_TAIL_ESC = 10,
 		HELICOPTER_TAIL_SERVO = 11,
 		HELICOPTER_COAXIAL = 12,
-		SPACECRAFT_2D = 13,
-		SPACECRAFT_3D = 14,
+		ROVER_MECANUM = 13,	        ///< 差速转向地面车辆
+		SPACECRAFT_2D = 14,
+		SPACECRAFT_3D = 15,
+		ABC_VTOL = 16,
+		ABC_VTOL_4R = 17,
 	};
 
 	enum class FailureMode {

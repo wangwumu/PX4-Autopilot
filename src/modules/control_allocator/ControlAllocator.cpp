@@ -273,6 +273,14 @@ ControlAllocator::update_effectiveness_source()
 			tmp = new ActuatorEffectivenessSpacecraft(this);
 			break;
 
+		case EffectivenessSource::ABC_VTOL:
+			tmp = new ActuatorEffectivenessAbcVtol(this);
+			break;
+
+		case EffectivenessSource::ABC_VTOL_4R:
+			tmp = new ActuatorEffectivenessAbcVtol4R(this);
+			break;
+
 		default:
 			PX4_ERR("Unknown airframe");
 			break;

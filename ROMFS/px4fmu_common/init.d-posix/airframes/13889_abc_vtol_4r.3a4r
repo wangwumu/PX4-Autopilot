@@ -1,0 +1,142 @@
+#!/bin/sh
+#
+# @name Abc Vtol 4R (Gazebo)
+#
+# @class VTOL
+# @type VTOL ABC 4R
+#
+
+. ${R}etc/init.d/rc.vtol_defaults
+
+PX4_SIMULATOR=${PX4_SIMULATOR:=gz}
+PX4_GZ_WORLD=${PX4_GZ_WORLD:=default}
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=abc_vtol_4r}
+
+param set-default SIM_GZ_EN 1
+
+param set-default MAV_TYPE 25
+
+param set-default CA_AIRFRAME 17
+
+param set-default CA_ROTOR_COUNT 4
+
+param set-default CA_ROTOR0_PX 0.0465
+param set-default CA_ROTOR0_PY 0.9654
+param set-default CA_ROTOR0_PZ 0.1407
+param set-default CA_ROTOR0_KM 0.3
+
+param set-default CA_ROTOR1_PX -0.591
+param set-default CA_ROTOR1_PY 0
+param set-default CA_ROTOR1_PZ 0.0538
+param set-default CA_ROTOR1_KM 0.2
+
+param set-default CA_ROTOR2_PX 0.0465
+param set-default CA_ROTOR2_PY -0.9654
+param set-default CA_ROTOR2_PZ 0.1407
+param set-default CA_ROTOR2_KM -0.3
+
+param set-default CA_ROTOR3_PX -0.591
+param set-default CA_ROTOR3_PY 0
+param set-default CA_ROTOR3_PZ -0.046
+param set-default CA_ROTOR3_KM -0.2
+
+param set-default CA_SV_CS_COUNT 0
+
+param set-default VT_FW_DIFTHR_EN 7
+param set-default VT_FW_DIFTHR_S_P 1
+param set-default VT_FW_DIFTHR_S_R 1
+param set-default VT_FW_DIFTHR_S_Y 1
+
+param set-default FD_FAIL_R 70
+
+param set-default FW_P_TC 0.6
+
+param set-default FW_R_LIM 15
+param set-default FW_AIRSPD_MIN 10
+param set-default FW_AIRSPD_TRIM 30
+param set-default FW_AIRSPD_MAX 85
+
+# VTOL Type: 4 = ABCVTOL_4R (四旋翼)
+param set-default VT_TYPE 4
+
+# Gazebo ESC/Servo mapping (4 motors)
+param set-default SIM_GZ_EC_FUNC1 101
+param set-default SIM_GZ_EC_FUNC2 102
+param set-default SIM_GZ_EC_FUNC3 103
+param set-default SIM_GZ_EC_FUNC4 104
+
+param set-default SIM_GZ_EC_MIN1 10
+param set-default SIM_GZ_EC_MIN2 10
+param set-default SIM_GZ_EC_MIN3 10
+param set-default SIM_GZ_EC_MIN4 10
+
+param set-default SIM_GZ_EC_MAX1 1500
+param set-default SIM_GZ_EC_MAX2 1500
+param set-default SIM_GZ_EC_MAX3 1500
+param set-default SIM_GZ_EC_MAX4 1500
+
+# Fixed wing parameters
+param set-default NPFG_PERIOD 12
+param set-default FW_PR_FF 0.2
+param set-default FW_PR_P 0.9
+param set-default FW_PSP_OFF 1
+param set-default FW_P_LIM_MIN 0
+param set-default FW_P_LIM_MAX 15
+param set-default FW_RR_FF 0.2
+
+# TECS tuning for ABC VTOL
+param set-default FW_T_CLMB_MAX 5
+param set-default FW_T_SINK_MAX 3
+param set-default FW_T_PTCH_DAMP 0.2
+
+# Quad-chute parameters - less sensitive for ABC VTOL
+param set-default VT_FW_QC_P 0
+param set-default VT_FW_QC_R 0
+param set-default FW_RR_P 0.5
+param set-default FW_THR_TRIM 0.25
+param set-default FW_THR_MAX 0.6
+param set-default FW_THR_MIN 0.05
+param set-default FW_T_SINK_MIN 2.2
+
+# Multicopter parameters
+param set-default MC_AIRMODE 1
+param set-default MC_ROLLRATE_P 0.3
+param set-default MC_YAW_P 1.6
+param set-default MC_YAWRATE_P 0.4
+param set-default MC_YAWRATE_I 0.1
+
+param set MPC_THR_HOVER 0.5
+param set HTE_THR_RANGE 0.4
+
+param set-default MPC_YAW_MODE 0
+param set-default WV_EN 0
+
+param set-default MIS_TAKEOFF_ALT 10
+
+param set-default MPC_XY_P 0.8
+param set-default MPC_XY_VEL_P_ACC 3
+param set-default MPC_XY_VEL_I_ACC 4
+param set-default MPC_XY_VEL_D_ACC 0.1
+
+param set-default NAV_ACC_RAD 5
+param set-default NAV_DLL_ACT 2
+
+param set-default VT_FWD_THRUST_EN 4
+param set-default VT_F_TRANS_THR 1
+param set-default VT_F_TRANS_DUR 10
+param set-default VT_TRANS_MIN_TM 5
+
+param set-default FD_ESCS_EN 0
+param set-default FD_ACT_EN 0
+param set-default FD_ACT_MOT_TOUT 500
+
+param set-default COM_PREARM_MODE 2
+param set-default COM_RC_IN_MODE 1
+
+param set-default MIS_TKO_LAND_REQ 0
+
+param set-default SYS_HAS_NUM_ASPD 1
+
+param set-default VT_ARSP_TRANS 5.0
+param set-default VT_ARSP_BLEND 4
+param set-default VT_TRANS_TIMEOUT 30.0

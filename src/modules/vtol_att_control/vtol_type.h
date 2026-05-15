@@ -63,7 +63,9 @@ enum class mode {
 enum class vtol_type {
 	TAILSITTER = 0,
 	TILTROTOR,
-	STANDARD
+	STANDARD,
+	ABCVTOL,		 // 三旋翼
+	ABCVTOL_4R	 	 // 四旋翼
 };
 
 enum VtolForwardActuationMode {
@@ -251,6 +253,13 @@ public:
 
 	virtual void parameters_update() = 0;
 
+	/*
+	 * @brief 获取开始转换空速
+	 * @return 开始转换空速[m/s]
+	 *
+	* 基于飞行器重量计算缩放后的开始转换空速
+	*/
+	float getTransitionToFwAirspeed() const;
 
 	/**
 	 * @brief Resets the transition timer states.
@@ -264,9 +273,24 @@ public:
 	 */
 	void handleEkfResets();
 
+	/**
+     	 * @brief 获取VTOL类型
+     	 * @return VTOL类型
+     	 */
+    	vtol_type get_vt_type() { return _vt_type; }
+
+     	/**
+      	 * @brief 设置VTOL类型
+      	 * @param vt_type  VTOL类型
+      	*/
+    	void set_vt_type(vtol_type vt_type) { _vt_type = vt_type; }
+
+
 protected:
 	VtolAttitudeControl *_attc;
 	mode _common_vtol_mode;
+
+    	vtol_type _vt_type;  ///< VTOL类型
 
 	static constexpr const int num_outputs_max = 8;
 

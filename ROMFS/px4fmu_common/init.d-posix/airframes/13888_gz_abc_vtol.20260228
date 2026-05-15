@@ -1,0 +1,187 @@
+#!/bin/sh
+#
+# @name Generic Abc Vtol (Gazebo)
+#
+# @class VTOL
+# @type VTOL ABC
+#
+
+. ${R}etc/init.d/rc.vtol_defaults
+
+PX4_SIMULATOR=${PX4_SIMULATOR:=gz}
+PX4_GZ_WORLD=${PX4_GZ_WORLD:=default}
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=abc_vtol}
+
+param set-default SIM_GZ_EN 1
+
+# Enable airspeed sensor from Gazebo/Gz bridge (not sensor_airspeed_sim)
+# For Gazebo/Gz, airspeed comes from gz_bridge module via SIM_GZ_EN_ASPD
+param set-default SIM_GZ_EN_ASPD 1
+
+# Disable sensor_airspeed_sim (software-in-the-loop simulator) for Gazebo/Gz
+# This is only used for SIH simulator, not for Gazebo/Gz
+param set-default SENS_EN_ARSPDSIM 0
+
+# Disable airspeed sensor detection in airspeed_selector
+# ASPD_PRIMARY: 0=Groundspeed minus windspeed, 1-3=Airspeed sensor 1-3
+# Set to 0 to prevent airspeed_selector from trying to detect physical sensors
+# This prevents "Airspeed sensor failure detected" warnings when SENS_EN_ARSPDSIM = 0
+param set-default ASPD_PRIMARY 1
+
+param set-default MAV_TYPE 24
+
+param set-default CA_AIRFRAME 16
+param set CA_ROTOR_COUNT 3
+
+param set CA_ROTOR0_PX 0.1367
+param set CA_ROTOR0_PY 0.9549
+param set CA_ROTOR0_PZ -0.1371
+param set CA_ROTOR1_PX 0.1367
+param set CA_ROTOR1_PY -0.9549
+param set CA_ROTOR1_PZ -0.1371
+param set CA_ROTOR2_PX -0.5894
+param set CA_ROTOR2_PY 0
+param set CA_ROTOR2_PZ -0.1201
+param set CA_ROTOR2_TILT 1
+#param set CA_ROTOR0_CT 6.8
+#param set CA_ROTOR1_CT 6.8
+#param set CA_ROTOR2_CT 6.8
+param set CA_ROTOR0_KM -0.05  # CW rotation (匹配30寸大桨的momentConstant=0.10)
+param set CA_ROTOR1_KM 0.05   # CCW rotation (匹配30寸大桨的momentConstant=0.10)
+param set CA_ROTOR2_KM 0.05   # CCW rotation (匹配30寸大桨的momentConstant=0.10)
+
+# Tilt servo configuration - CRITICAL for tricopter yaw control
+# CA_SV_TL0_CT must be set to 1 (Yaw) for the servo to respond to yaw control commands
+# CA_SV_TL0_TD controls tilt direction: 0 = Towards Front, 90 = Towards Right, 270 = Towards Left
+# For T-layout tricopter, the rear motor typically tilts left/right for yaw control
+# CRITICAL: If servo rotates around X-axis (left/right tilt in FLU frame), TD must be 90 or 270
+# TD = 0 (forward tilt) cannot produce yaw torque when motor is on X-axis (PY = 0)
+param set-default CA_SV_TL0_MAXA 75
+param set-default CA_SV_TL0_MINA -75
+param set-default CA_SV_TL0_TD 90  # FIXED: Set to 90 for X-axis rotation (left/right tilt). Use 270 if direction is reversed
+param set-default CA_SV_TL0_CT 1  # Enable yaw control (CRITICAL for tricopter!)
+param set-default CA_SV_TL_COUNT 1
+param set-default VT_FW_DIFTHR_EN 7
+param set-default VT_FW_DIFTHR_S_P 1
+param set-default VT_FW_DIFTHR_S_R 1
+param set-default VT_FW_DIFTHR_S_Y 1
+
+param set-default FW_R_LIM 15
+param set-default FW_AIRSPD_MIN 10
+param set-default FW_AIRSPD_TRIM 30
+param set-default FW_AIRSPD_MAX 85
+
+# VTOL Type: 3 = ABCVTOL
+param set-default VT_TYPE 3
+
+# Gazebo ESC/Servo mapping
+param set-default SIM_GZ_EC_FUNC1 101
+param set-default SIM_GZ_EC_FUNC2 102
+param set-default SIM_GZ_EC_FUNC3 103
+
+param set-default SIM_GZ_EC_MIN1 10
+param set-default SIM_GZ_EC_MIN2 10
+param set-default SIM_GZ_EC_MIN3 10
+
+param set-default SIM_GZ_EC_MAX1 1500
+param set-default SIM_GZ_EC_MAX2 1500
+param set-default SIM_GZ_EC_MAX3 1500
+
+param set-default SIM_GZ_SV_FUNC1 201
+
+param set-default SIM_GZ_SV_MAXA1 75
+param set-default SIM_GZ_SV_MINA1 -75
+
+# Fixed wing parameters
+param set-default NPFG_PERIOD 12
+param set-default FW_PR_FF 0.2
+param set-default FW_PR_P 0.9
+param set-default FW_PSP_OFF 1
+param set-default FW_P_LIM_MIN 0
+param set-default FW_P_LIM_MAX 15
+param set-default FW_RR_FF 0.2  # Increased from 0.1 to 0.2 for better roll response
+
+# TECS tuning for ABC VTOL
+param set-default FW_T_CLMB_MAX 5  # Reduce max climb rate
+param set-default FW_T_SINK_MAX 3  # Reduce max sink rate
+param set-default FW_T_PTCH_DAMP 0.2  # Add pitch damping
+
+# Quad-chute parameters - make less sensitive for ABC VTOL
+param set-default VT_FW_QC_P 0   # Disable pitch quad-chute (ABC VTOL flies at ~90° pitch)
+param set-default VT_FW_QC_R 0   # Disable roll quad-chute (ABC VTOL flies at ~90° roll)
+param set-default FW_RR_P 0.5   # Increased from 0.3 to 0.5 for better roll control (ABC VTOL relies on differential thrust)
+param set-default FW_THR_TRIM 0.25
+param set-default FW_THR_MAX 0.6
+param set-default FW_THR_MIN 0.05
+# Duplicate parameters removed - using values above
+param set-default FW_T_SINK_MIN 2.2
+
+# Multicopter parameters
+param set-default MC_AIRMODE 1
+param set-default MC_ROLLRATE_P 0.3
+param set-default MC_YAW_P 1.6
+param set-default MC_YAWRATE_P 0.4
+param set-default MC_YAWRATE_I 0.1
+
+# Hover thrust: nominal = empty (no battery) so no runaway climb before HTE converges; with payload HTE adapts up.
+# Use param set so SITL parameters.bson does not override (same as CA_ROTOR* above).
+param set MPC_THR_HOVER 0.5
+param set HTE_THR_RANGE 0.4
+
+# Mission yaw control - ensure heading follows waypoint direction
+# MPC_YAW_MODE: 0=towards waypoint, 1=towards home, 2=away from home, 3=along trajectory, 4=yaw first, 5=fixed
+# Set to 0 to make vehicle yaw follow mission path direction (same as generic_mc_with_tilt)
+# This overrides the default value from rc.vtol_defaults (which is 4)
+param set-default MPC_YAW_MODE 0
+
+# Disable weather vane to allow mission yaw control
+# WV_EN: 0=Disabled, 1=Enabled
+# When enabled, weather vane overrides mission yaw commands in mission mode
+# Set to 0 to allow MPC_YAW_MODE to work properly (same as generic_mc_with_tilt)
+# This overrides the default value from rc.vtol_defaults (which is 1)
+param set-default WV_EN 0
+
+param set-default MIS_TAKEOFF_ALT 10
+
+param set-default MPC_XY_P 0.8
+param set-default MPC_XY_VEL_P_ACC 3
+param set-default MPC_XY_VEL_I_ACC 4
+param set-default MPC_XY_VEL_D_ACC 0.1
+
+param set-default NAV_ACC_RAD 5
+param set-default NAV_DLL_ACT 2
+
+param set-default VT_FWD_THRUST_EN 4
+param set-default VT_F_TRANS_THR 1
+# 预期过度时间
+param set-default VT_F_TRANS_DUR 10
+# 最小过渡时间
+param set-default VT_TRANS_MIN_TM 5
+
+param set-default FD_ESCS_EN 0
+param set-default FD_ACT_EN 0
+param set-default FD_ACT_MOT_TOUT 500
+
+param set-default COM_PREARM_MODE 2
+param set-default COM_RC_IN_MODE 1
+
+# Mission configuration - allow missions without landing waypoint for testing
+# MIS_TKO_LAND_REQ: 0=No requirements, 1=Require takeoff, 2=Require landing, 3=Require both
+# Set to 0 for testing, or ensure mission includes VTOL Landing waypoint
+param set-default MIS_TKO_LAND_REQ 0
+
+# Disable airspeed sensor requirement for simulation
+# SYS_HAS_NUM_ASPD: 0=No airspeed sensor, 1=One sensor, 2=Two sensors
+# Set to 0 to disable airspeed checks in simulation
+# Note: CBRK_AIRSPD_CHK parameter has been removed, use SYS_HAS_NUM_ASPD instead
+param set-default SYS_HAS_NUM_ASPD 1
+
+# VTOL transition parameters - adjust for simulation
+# Lower transition airspeed to avoid timeout (default: 10.0 m/s)
+param set-default VT_ARSP_TRANS 5.0
+
+# Lower blend airspeed threshold (default: 8.0 m/s)
+param set-default VT_ARSP_BLEND 4
+
+# Increase transition timeout to allow more time for conversion (default: 15.0 s)
+param set-default VT_TRANS_TIMEOUT 30.0

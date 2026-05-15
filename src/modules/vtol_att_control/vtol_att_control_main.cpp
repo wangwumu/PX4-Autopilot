@@ -72,7 +72,14 @@ VtolAttitudeControl::VtolAttitudeControl() :
 
 	} else if (static_cast<vtol_type>(_param_vt_type.get()) == vtol_type::STANDARD) {
 		_vtol_type = new Standard(this);
-
+	}
+	else if (static_cast<vtol_type>(_param_vt_type.get()) == vtol_type::ABCVTOL) {
+		_vtol_type = new AbcVtol(this);			// ABC VTOL
+        	_vtol_type->set_vt_type(vtol_type::ABCVTOL);
+	}
+	else if (static_cast<vtol_type>(_param_vt_type.get()) == vtol_type::ABCVTOL_4R) {
+		_vtol_type = new AbcVtol4R(this);		// ABC VTOL 4R
+        	_vtol_type->set_vt_type(vtol_type::ABCVTOL_4R);
 	} else {
 		exit_and_cleanup();
 	}

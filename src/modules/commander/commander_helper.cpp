@@ -78,6 +78,8 @@
 #define VEHICLE_TYPE_VTOL_TILTROTOR 21
 #define VEHICLE_TYPE_VTOL_FIXEDROTOR 22 // VTOL standard
 #define VEHICLE_TYPE_VTOL_TAILSITTER 23
+#define VEHICLE_TYPE_VTOL_ABC	24	 /// ABC VTOL
+#define VEHICLE_TYPE_VTOL_ABC_4R 25    	 /// ABC VTOL 4R
 
 #define BLINK_MSG_TIME	700000	// 3 fast blinks (in us)
 
@@ -102,14 +104,22 @@ bool is_vtol(const vehicle_status_s &current_status)
 		current_status.system_type == VEHICLE_TYPE_VTOL_TAILSITTER_QUADROTOR ||
 		current_status.system_type == VEHICLE_TYPE_VTOL_TILTROTOR ||
 		current_status.system_type == VEHICLE_TYPE_VTOL_FIXEDROTOR ||
+		current_status.system_type == VEHICLE_TYPE_VTOL_ABC ||
+		current_status.system_type == VEHICLE_TYPE_VTOL_ABC_4R ||
 		current_status.system_type == VEHICLE_TYPE_VTOL_TAILSITTER);
 }
 
 bool is_vtol_tailsitter(const vehicle_status_s &current_status)
 {
+	if (current_status.in_transition_mode && current_status.system_type == VEHICLE_TYPE_VTOL_ABC) {
+		 return false;
+	}
+
 	return (current_status.system_type == VEHICLE_TYPE_VTOL_TAILSITTER_DUOROTOR ||
 		current_status.system_type == VEHICLE_TYPE_VTOL_TAILSITTER_QUADROTOR ||
-		current_status.system_type == VEHICLE_TYPE_VTOL_TAILSITTER);
+		current_status.system_type == VEHICLE_TYPE_VTOL_TAILSITTER ||
+         	current_status.system_type == VEHICLE_TYPE_VTOL_ABC ||
+         	current_status.system_type == VEHICLE_TYPE_VTOL_ABC_4R);
 }
 
 bool is_fixed_wing(const vehicle_status_s &current_status)

@@ -39,4 +39,6 @@ px4_add_module(
 		vtol_type.cpp
 		tailsitter.cpp
 		standard.cpp
+		abc_vtol.cpp
+		abc_vtol_4r.cpp
 	)

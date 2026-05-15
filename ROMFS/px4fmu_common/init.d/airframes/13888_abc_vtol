@@ -1,0 +1,52 @@
+#!/bin/sh
+#
+# @name Generic Abc Vtol
+#
+# @class VTOL
+# @type VTOL ABC
+#
+# @output Motor1 motor 1
+# @output Motor2 motor 2
+# @output Motor3 motor 3
+# @output Servo1 yaw servo
+#
+# @board bitcraze_crazyflie exclude
+# @board px4_fmu-v2 exclude
+#
+
+. ${R}etc/init.d/rc.vtol_defaults
+
+param set-default MAV_TYPE 24
+
+param set-default CA_AIRFRAME 16
+# Tricopter
+param set-default CA_ROTOR0_PX 0.1367
+param set-default CA_ROTOR0_PY 0.9549
+param set-default CA_ROTOR1_PX 0.1367
+param set-default CA_ROTOR1_PY -0.9549
+param set-default CA_ROTOR2_PX -0.5894
+param set-default CA_ROTOR2_PY 0
+param set-default CA_ROTOR2_TILT 1
+param set-default CA_ROTOR0_CT 6.5
+param set-default CA_ROTOR1_CT 6.5
+param set-default CA_ROTOR2_CT 6.5
+param set-default CA_ROTOR_COUNT 3
+param set-default CA_SV_TL0_MAXA 75
+param set-default CA_SV_TL0_MINA -75
+param set-default CA_SV_TL0_TD 90
+param set-default CA_SV_TL0_CT 1
+param set-default CA_SV_TL_COUNT 1
+param set-default VT_FW_DIFTHR_EN 7
+param set-default VT_FW_DIFTHR_S_P 1
+param set-default VT_FW_DIFTHR_S_R 0.5
+param set-default VT_FW_DIFTHR_S_Y 1
+
+# VTOL Type: 3 = ABCVTOL
+param set-default VT_TYPE 3
+
+# Failure Detector parameters for VTOL (allow larger attitude angles during transitions)
+# Increase roll/pitch failure thresholds and trigger time for VTOL operations
+param set-default FD_FAIL_R 60
+param set-default FD_FAIL_R_TTRI 1.0
+param set-default FD_FAIL_P 60
+param set-default FD_FAIL_P_TTRI 1.0

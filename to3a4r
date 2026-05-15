@@ -1,0 +1,2 @@
+cp $HOME/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/13889_abc_vtol_4r.3a4r $HOME/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/13889_gz_abc_vtol_4r 
+cp $HOME/PX4-Autopilot/Tools/simulation/gz/models/abc_vtol_4r/model.sdf.3a4r $HOME/PX4-Autopilot/Tools/simulation/gz/models/abc_vtol_4r/model.sdf 
