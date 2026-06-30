@@ -1,16 +1,16 @@
 #!/bin/sh
 #
-# @name Generic Abc Vtol (Gazebo)
+# @name Abc Vtol 4R (Gazebo)
 #
 # @class VTOL
-# @type VTOL ABC
+# @type VTOL ABC 4R
 #
 
 . ${R}etc/init.d/rc.vtol_defaults
 
 PX4_SIMULATOR=${PX4_SIMULATOR:=gz}
 PX4_GZ_WORLD=${PX4_GZ_WORLD:=default}
-PX4_SIM_MODEL=${PX4_SIM_MODEL:=quadtailsitter}
+PX4_SIM_MODEL=${PX4_SIM_MODEL:=abc_vtol_4r}
 
 param set-default SIM_GZ_EN 1
 
@@ -20,24 +20,24 @@ param set-default CA_AIRFRAME 17
 
 param set-default CA_ROTOR_COUNT 4
 
-param set-default CA_ROTOR0_PX 0.1044
-param set-default CA_ROTOR0_PY 0.9387
-param set-default CA_ROTOR0_PZ -0.1383
+param set-default CA_ROTOR0_PX 0.0465
+param set-default CA_ROTOR0_PY 0.9654
+param set-default CA_ROTOR0_PZ 0.1407
 param set-default CA_ROTOR0_KM 0.3
 
-param set-default CA_ROTOR1_PX -0.5645
-param set-default CA_ROTOR1_PY -0.3405
-param set-default CA_ROTOR1_PZ -0.0871
+param set-default CA_ROTOR1_PX -0.591
+param set-default CA_ROTOR1_PY 0
+param set-default CA_ROTOR1_PZ 0.0538
 param set-default CA_ROTOR1_KM 0.2
 
-param set-default CA_ROTOR2_PX 0.1044
-param set-default CA_ROTOR2_PY -0.9387
-param set-default CA_ROTOR2_PZ -0.1383
+param set-default CA_ROTOR2_PX 0.0465
+param set-default CA_ROTOR2_PY -0.9654
+param set-default CA_ROTOR2_PZ 0.1407
 param set-default CA_ROTOR2_KM -0.3
 
-param set-default CA_ROTOR3_PX -0.5645
-param set-default CA_ROTOR3_PY 0.3405
-param set-default CA_ROTOR3_PZ -0.0871
+param set-default CA_ROTOR3_PX -0.591
+param set-default CA_ROTOR3_PY 0
+param set-default CA_ROTOR3_PZ -0.046
 param set-default CA_ROTOR3_KM -0.2
 
 param set-default CA_SV_CS_COUNT 0
@@ -47,19 +47,26 @@ param set-default VT_FW_DIFTHR_S_P 1
 param set-default VT_FW_DIFTHR_S_R 1
 param set-default VT_FW_DIFTHR_S_Y 1
 
+# 姿态故障检测
+# 横滚超过70度，且时间持续0.3秒，判定失控
 param set-default FD_FAIL_R 70
+param set-default FD_FAIL_R_TTRI 0.3
 
+# 希望用多少秒消除俯仰误差
 param set-default FW_P_TC 0.6
 
-param set-default FW_R_LIM 15
+param set-default FW_R_LIM 25
 param set-default FW_AIRSPD_MIN 10
 param set-default FW_AIRSPD_TRIM 30
 param set-default FW_AIRSPD_MAX 85
 
-# VTOL Type: 3 = ABCVTOL
-param set-default VT_TYPE 0
+# 转向时，每秒钟允许最大的转向度数
+param set-default FW_Y_RMAX 50
 
-# Gazebo ESC/Servo mapping
+# VTOL Type: 4 = ABCVTOL_4R (四旋翼)
+param set-default VT_TYPE 4
+
+# Gazebo ESC/Servo mapping (4 motors)
 param set-default SIM_GZ_EC_FUNC1 101
 param set-default SIM_GZ_EC_FUNC2 102
 param set-default SIM_GZ_EC_FUNC3 103
@@ -75,96 +82,150 @@ param set-default SIM_GZ_EC_MAX2 1500
 param set-default SIM_GZ_EC_MAX3 1500
 param set-default SIM_GZ_EC_MAX4 1500
 
-# Fixed wing parameters
+# 固定翼跟随航线的控制算法。`NPFG_PERIOD` 决定了跟踪的"松紧"——越大跟踪越松、转弯越平缓
+# 系统缺省值为 10
 param set-default NPFG_PERIOD 12
+
+# 俯仰角前馈增益，缺省值为 0.5
+# 让俯仰/横滚通道在跟踪 TECS 指令时更"钝"一些
+# 输出 = 前馈增益 × 角速率设定值
 param set-default FW_PR_FF 0.2
-param set-default FW_PR_P 0.9
+param set-default FW_RR_FF 0.2
+
+# FW状态下，机翼的迎角范围，FW_PSP_OFF为调整值，为避免飞机因为迎角过小而导致失速
+# PX4中，实际控制角度 = 迎角setpoint + FW_PSP_OFF
 param set-default FW_PSP_OFF 1
 param set-default FW_P_LIM_MIN 0
 param set-default FW_P_LIM_MAX 15
-param set-default FW_RR_FF 0.2  # Increased from 0.1 to 0.2 for better roll response
 
-# TECS tuning for ABC VTOL
-param set-default FW_T_CLMB_MAX 5  # Reduce max climb rate
-param set-default FW_T_SINK_MAX 3  # Reduce max sink rate
-param set-default FW_T_PTCH_DAMP 0.2  # Add pitch damping
+# 下面三个参数缺省值定义在fw_rate_control/kw_rate_control_params.c
+# 本设置文件数值比缺省值大很多。经过测试是必要的，因为abc飞行器靠差动控制
+param set-default FW_PR_P 0.9
+param set-default FW_RR_P 0.9
+param set-default FW_YR_P 0.5
 
-# Quad-chute parameters - make less sensitive for ABC VTOL
-param set-default VT_FW_QC_P 0   # Disable pitch quad-chute (ABC VTOL flies at ~90° pitch)
-param set-default VT_FW_QC_R 0   # Disable roll quad-chute (ABC VTOL flies at ~90° roll)
-param set-default FW_RR_P 0.5   # Increased from 0.3 to 0.5 for better roll control (ABC VTOL relies on differential thrust)
+# 最大爬升速度，及最小下降速度，单位米/秒
+# FW_T_PITCH_DAMP则为修正阻尼。即当TECS发现高度/速度不对时，修正俯仰的力度
+# 缺省0.1，数值越大，修正越快，越小越平滑
+param set-default FW_T_CLMB_MAX 5
+param set-default FW_T_SINK_MAX 3
+param set-default FW_T_PTCH_DAMP 0.2
+
+# 触发quad-chute的阀值，即当俯仰、横滚角度达到此值时，触发
+# 0 不触发
+param set-default VT_FW_QC_P 0
+param set-default VT_FW_QC_R 0
+
 param set-default FW_THR_TRIM 0.25
 param set-default FW_THR_MAX 0.6
 param set-default FW_THR_MIN 0.05
-# Duplicate parameters removed - using values above
+
+# 油门收到最小时，飞机能达到的下降率
 param set-default FW_T_SINK_MIN 2.2
 
 # Multicopter parameters
+# 当推力为零时，airmode 通过控制分配器内部去饱和算法保持横滚/俯仰的差动推力仍
+# 然有效——电机不会全部停转，而是保持"一侧正转、一侧反转（或怠速）"的差动状
 param set-default MC_AIRMODE 1
+
 param set-default MC_ROLLRATE_P 0.3
 param set-default MC_YAW_P 1.6
 param set-default MC_YAWRATE_P 0.4
 param set-default MC_YAWRATE_I 0.1
 
-# Hover thrust: nominal = empty (no battery) so no runaway climb before HTE converges; with payload HTE adapts up.
-# Use param set so SITL parameters.bson does not override (same as CA_ROTOR* above).
+# 悬停油门基准：1. 悬停推力EKF的初始值，2. EKF失效时额回退值，3.手动模式摇杆中位映射
 param set MPC_THR_HOVER 0.5
+
+# 悬停推力估计范围，与上面参数配合
+# 0.4， 「0.5-0.4 ~ 0.5+0.4」
 param set HTE_THR_RANGE 0.4
 
-# Mission yaw control - ensure heading follows waypoint direction
-# MPC_YAW_MODE: 0=towards waypoint, 1=towards home, 2=away from home, 3=along trajectory, 4=yaw first, 5=fixed
-# Set to 0 to make vehicle yaw follow mission path direction (same as generic_mc_with_tilt)
-# This overrides the default value from rc.vtol_defaults (which is 4)
+# 任务偏航模式
+# 0 - 机头指向当前航点
+# 1 - 机头执行出发点
+# 2 - 机头背离出发点
+# 3 - 机头沿轨迹方向
+# 4 - 先转机头再走
 param set-default MPC_YAW_MODE 0
 
-# Disable weather vane to allow mission yaw control
-# WV_EN: 0=Disabled, 1=Enabled
-# When enabled, weather vane overrides mission yaw commands in mission mode
-# Set to 0 to allow MPC_YAW_MODE to work properly (same as generic_mc_with_tilt)
-# This overrides the default value from rc.vtol_defaults (which is 1)
+# 风向标模式
+# 1 - 自动转机头迎风，减少侧风偏移
+# 0 - 机头方向由MPC_YAW_MODE定，不受风影响
 param set-default WV_EN 0
 
+# 起飞高度
+# 飞行器飞到指定高度后，再走航点，缺省值 2.5米
 param set-default MIS_TAKEOFF_ALT 10
 
+# 下面一组参数描述，当位置发生偏差时，以什么样的速度回来
 param set-default MPC_XY_P 0.8
 param set-default MPC_XY_VEL_P_ACC 3
 param set-default MPC_XY_VEL_I_ACC 4
 param set-default MPC_XY_VEL_D_ACC 0.1
 
+# 航点接受半径，即飞机达到航点指定范围内即算到达，自动切下一个航点
 param set-default NAV_ACC_RAD 5
+
+# 数据链路断开后的动作
+# 0 - 无动作
+# 1 - 悬停
+# 2 - 返航
+# 3 - 降落
+# 5 - 终止
+# 6 - 上锁
 param set-default NAV_DLL_ACT 2
 
-param set-default VT_FWD_THRUST_EN 4
-param set-default VT_F_TRANS_THR 1
-# 预期过度时间
+# 转换过度时长
+# 从悬停过度到平飞使用时长
 param set-default VT_F_TRANS_DUR 10
-# 最小过渡时间
+
+# 转换过度最小时长
+# 转换过度时间小于此值时，不会进行转换
 param set-default VT_TRANS_MIN_TM 5
 
+# 电调就绪检测
+#飞控解锁后，检查所有电调是否成功就绪。0.3 秒内没收到全部电调的武装确认 → 判定故障 → 自动上锁
+# 0 - 跳过次检查
 param set-default FD_ESCS_EN 0
+
+# 电机故障检测
+# 飞行中持续监控每个电机的电流。如果油门超过阈值但电流异常低 → 判定该电机故障（断桨/堵转/烧毁）
+# 0 - 跳过此检查
 param set-default FD_ACT_EN 0
+
+# 电机故障确认时间，，电机故障也不是瞬间判定的——需要电流异常持续超过这个时间才触发。默认 100ms
 param set-default FD_ACT_MOT_TOUT 500
 
+# 表示解锁后先进"预武装"状态——舵机活动但电机不转，再手动操作进入真正武装。** 仿真中多一层安全缓冲，防止地面站误触解锁直接转电机
 param set-default COM_PREARM_MODE 2
+
+# 控制输入来源
+# 0 - 仅 RC 接收控制输入
+# 1 - 仅 mavlink 输入
+# 2 - RC 或 mavlink（自动切换）
+# 3 - RC 或 mavlink（锁定首个有效源）
+# 4 - 禁用所有手动模式
+# 5~8 - 各种优先组合
 param set-default COM_RC_IN_MODE 1
 
-# Mission configuration - allow missions without landing waypoint for testing
-# MIS_TKO_LAND_REQ: 0=No requirements, 1=Require takeoff, 2=Require landing, 3=Require both
-# Set to 0 for testing, or ensure mission includes VTOL Landing waypoint
+# 任务起降要求
+# 0 - 无要求 （不需要起飞和降落航点也能执行任务）
+# 1 - 需要起飞 （任务必须以 Takeoff 航点开始）
+# 2 - 需要降落 （任务必须以 Land 航点降落）
+# 3 - 两者都需要
 param set-default MIS_TKO_LAND_REQ 0
 
-# Disable airspeed sensor requirement for simulation
-# SYS_HAS_NUM_ASPD: 0=No airspeed sensor, 1=One sensor, 2=Two sensors
-# Set to 0 to disable airspeed checks in simulation
-# Note: CBRK_AIRSPD_CHK parameter has been removed, use SYS_HAS_NUM_ASPD instead
+# 高速系统有空速传感器可用
 param set-default SYS_HAS_NUM_ASPD 1
 
-# VTOL transition parameters - adjust for simulation
-# Lower transition airspeed to avoid timeout (default: 10.0 m/s)
+# 过度空速
+# 空速超过此值 才允许完成过渡切入 FW。** 默认 10 m/s
 param set-default VT_ARSP_TRANS 5.0
 
-# Lower blend airspeed threshold (default: 8.0 m/s)
+# 混合空速
+# 空速超过 4 m/s 时开始 MC/FW 控制混合。** 在 4~5 m/s 之间，MC 和 FW 的控制权重逐渐过渡。
 param set-default VT_ARSP_BLEND 4
 
-# Increase transition timeout to allow more time for conversion (default: 15.0 s)
+# 过度超时
+# 过渡开始后 30 秒还没完成 → 放弃，触发 Quad-Chute 切回 MC。** 默认 15 秒
 param set-default VT_TRANS_TIMEOUT 30.0

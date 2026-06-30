@@ -60,8 +60,8 @@ void AbcVtol4R::update_vtol_state() {
 
             // 检查是否达到切换回MC模式的俯仰角阈值或超时
             if (pitch >= ABC4R_PITCH_THRESHOLD_AUTO_TRANSITION_TO_MC ||
-                _time_since_trans_start > _param_vt_b_trans_dur.get()) {
-            _vtol_mode = vtol_mode::MC_MODE; // 切换回MC模式
+                    _time_since_trans_start > _param_vt_b_trans_dur.get()) {
+                _vtol_mode = vtol_mode::MC_MODE; // 切换回MC模式
             }
             break;
         }

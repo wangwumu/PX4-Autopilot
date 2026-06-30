@@ -37,7 +37,8 @@
 #include <uORB/topics/vehicle_torque_setpoint.h>
 
 // [rad] 自动转换到固定翼模式所需的俯仰角阈值
-static constexpr float ABC_PITCH_THRESHOLD_AUTO_TRANSITION_TO_FW = -1.396f; // -80°
+static constexpr float ABC_PITCH_THRESHOLD_AUTO_TRANSITION_TO_FW = -1.396f;  // -80°
+// static constexpr float ABC_PITCH_THRESHOLD_AUTO_TRANSITION_TO_FW = -1.484;      // -85°
 
 // [rad] 自动转换到悬停模式所需的俯仰角阈值
 static constexpr float ABC_PITCH_THRESHOLD_AUTO_TRANSITION_TO_MC = -0.26f; // -15°
