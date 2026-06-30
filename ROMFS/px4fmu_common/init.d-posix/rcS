@@ -356,6 +356,19 @@ then
 	internal_combustion_engine_control start
 fi
 
+#
+# Auto-detect primary network interface for MAVLink communication.
+# Required for QGroundControl to connect from Windows host when PX4 runs in WSL2.
+# Override by setting PX4_NET_INTERFACE before starting PX4, e.g.:
+#   PX4_NET_INTERFACE=eth0 make px4_sitl_default
+#   PX4_NET_INTERFACE="" make px4_sitl_default   (disable, localhost only)
+if [ -z "$PX4_NET_INTERFACE" ]; then
+	DEFAULT_IFACE=$(ip route 2>/dev/null | grep '^default' | awk '{print $5}' | head -1)
+	if [ -n "$DEFAULT_IFACE" ]; then
+		export PX4_NET_INTERFACE="$DEFAULT_IFACE"
+	fi
+fi
+
 #user defined mavlink streams for instances can be in PATH
 . px4-rc.mavlink
 
