@@ -2033,6 +2033,8 @@ FixedWingModeManager::Run()
 			if (_trajectory_setpoint_sub.update(&trajectory_setpoint)) {
 				bool valid_setpoint = false;
 				_pos_sp_triplet = {}; // clear any existing
+				_position_setpoint_previous_valid = false;
+				_position_setpoint_next_valid = false;
 				_pos_sp_triplet.timestamp = trajectory_setpoint.timestamp;
 				_pos_sp_triplet.current.timestamp = trajectory_setpoint.timestamp;
 				_pos_sp_triplet.current.cruising_speed = NAN; // ignored
