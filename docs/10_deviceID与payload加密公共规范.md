@@ -99,6 +99,7 @@ deviceID 的 bit25~31 复用 `incompatFlag` 字节的 bit1~7，而 MAVLink 标�
   > **在线状态公开可见**：帧头 deviceID 为明文，任何观察者（QGC、mavp2p、gcs_server）无需解密即可感知"某 deviceID 在发帧（在线）"；payload 内的状态/位置等为密文，需密钥解密。**待命/心跳用标准 HEARTBEAT（msgID=0）承载**，识别靠解密后的 msgID。
 - **零长度消息禁止**：加密明文 = `deviceID(4B) || 原始消息 payload`，且 **原始消息 payload 长度必须 ≥ 1 字节**——避免与"超限退化帧"（明文仅 deviceID、payload 为空，见 2.3）在接收端形态相同而无法区分。任何一方不得发送 payload 为空的合法消息。
   > **链路范围边界**：本协议适用于**升级组件之间经 mavp2p 的链路**。数传直连链路（PX4 TELEM1 ↔ GCS，应急/监控旁路）是否纳入本加密方案，或作为独立明文旁路，**需另行约定**，不在本协议范围。
+  > **当前约定（PX4 实现）**：PX4 侧不提供 per-link opt-out，**所有 MAVLink 实例（TELEM1 / TELEM2 / USB 等）统一加密，明文帧一律丢弃**——即 TELEM1 直连也纳入加密，不保留明文旁路。若后续需要明文应急旁路，需新增参数（按实例指定加密开关）。
 
 ## 2.3 加密后的 payload block 结构
 
