@@ -3228,6 +3228,12 @@ MavlinkReceiver::run()
 				for (ssize_t i = 0; i < nread; i++) {
 					if (mavlink_parse_char(_mavlink.get_channel(), buf[i], &msg, &_status)) {
 
+						// Decrypt the frame payload. Plaintext / wrong-key / replay / tampered
+						// frames are dropped here — this link only accepts encrypted frames.
+						if (!MavlinkCrypto::instance().decrypt_message(&msg)) {
+							continue;
+						}
+
 						// If we receive a complete MAVLink 2 packet, also switch the outgoing protocol version
 						if (!(_mavlink.get_status()->flags & MAVLINK_STATUS_FLAG_IN_MAVLINK1)
 						    && (_mavlink.get_status()->flags & MAVLINK_STATUS_FLAG_OUT_MAVLINK1)) {

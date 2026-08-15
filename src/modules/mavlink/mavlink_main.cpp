@@ -105,6 +105,13 @@ Mavlink::Mavlink() :
 	// initialise parameter cache
 	mavlink_update_parameters();
 
+	// configure the deviceID + AES-256-GCM key for the encrypted link
+	MavlinkCrypto::instance().configure((uint32_t)_param_mav_device_id.get());
+
+	if (_param_mav_device_id.get() == 0) {
+		PX4_ERR("MAV_DEVICE_ID not set: MAVLink link disabled (encryption requires a device ID)");
+	}
+
 	// save the current system- and component ID because we don't allow them to change during operation
 	int sys_id = _param_mav_sys_id.get();
 
@@ -736,8 +743,11 @@ void Mavlink::send_start(int length)
 	pthread_mutex_lock(&_send_mutex);
 	_last_write_try_time = hrt_absolute_time();
 
+	// payload encryption expands the frame by counter(8) + deviceID(4) + tag(16)
+	const uint32_t crypto_overhead = MavlinkCrypto::instance().enabled() ? MavlinkCrypto::OVERHEAD : 0;
+
 	// check if there is space in the buffer
-	if (length > (int)get_free_tx_buf()) {
+	if (length + (int)crypto_overhead > (int)get_free_tx_buf()) {
 		// not enough space in buffer to send
 		count_txerrbytes(length);
 
@@ -757,6 +767,20 @@ void Mavlink::send_finish()
 		pthread_mutex_unlock(&_send_mutex);
 		return;
 	}
+
+	// Encrypt the outgoing frame payload (deviceID + AES-256-GCM). On failure
+	// (crypto unconfigured or non-v2 frame) the frame is dropped — this link
+	// never transmits plaintext.
+	uint16_t encrypted_len = (uint16_t)_buf_fill;
+
+	if (!MavlinkCrypto::instance().encrypt_frame(_buf, &encrypted_len)) {
+		count_txerrbytes(_buf_fill);
+		_buf_fill = 0;
+		pthread_mutex_unlock(&_send_mutex);
+		return;
+	}
+
+	_buf_fill = encrypted_len;
 
 	int ret = -1;
 

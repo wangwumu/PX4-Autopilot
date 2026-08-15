@@ -80,6 +80,7 @@
 #include <uORB/topics/vehicle_status.h>
 
 #include "mavlink_command_sender.h"
+#include "mavlink_crypto.h"
 #include "mavlink_events.h"
 #include "mavlink_messages.h"
 #include "mavlink_receiver.h"
@@ -661,6 +662,7 @@ private:
 	DEFINE_PARAMETERS(
 		(ParamInt<px4::params::MAV_SYS_ID>) _param_mav_sys_id,
 		(ParamInt<px4::params::MAV_COMP_ID>) _param_mav_comp_id,
+		(ParamInt<px4::params::MAV_DEVICE_ID>) _param_mav_device_id,
 		(ParamInt<px4::params::MAV_PROTO_VER>) _param_mav_proto_ver,
 		(ParamInt<px4::params::MAV_SIK_RADIO_ID>) _param_sik_radio_id,
 		(ParamInt<px4::params::MAV_TYPE>) _param_mav_type,

@@ -46,7 +46,7 @@ from __future__ import print_function
 import sys
 import os
 import argparse
-from px4airframes import srcscanner, srcparser, xmlout, rcout, markdownout
+from px4airframes import srcscanner, srcparser, xmlout, rcout, markdownout, jsonout
 
 def main():
     # Parse command line arguments
@@ -83,11 +83,19 @@ def main():
                          const="",
                          metavar="BOARD",
                          help="Board to create airframes xml for")
+    parser.add_argument("-j", "--json",
+                        nargs='?',
+                        const="airframes.json",
+                        metavar="FILENAME",
+                        help="Create JSON file"
+                             " (default FILENAME: airframes.json)")
+    parser.add_argument("--compress", action='store_true',
+                        help="Compress JSON output with xz")
     parser.add_argument('-v', '--verbose', action='store_true', help="verbose output")
     args = parser.parse_args()
 
     # Check for valid command
-    if not (args.xml) and not (args.start_script) and not args.markdown:
+    if not (args.xml) and not (args.start_script) and not args.markdown and not args.json:
         print("Error: You need to specify at least one output method!\n")
         parser.print_usage()
         sys.exit(1)
@@ -116,6 +124,19 @@ def main():
         if args.verbose: print("Creating markdown file " + args.markdown)
         out = markdownout.MarkdownTablesOutput(airframe_groups, args.board, args.image_path)
         out.Save(args.markdown)
+
+    # Output to JSON file
+    if args.json:
+        if args.verbose: print("Creating JSON file " + args.json)
+        out = jsonout.JsonOutput(airframe_groups, args.board)
+        out.Save(args.json)
+        if args.compress:
+            import lzma
+            xz_filename = args.json + '.xz'
+            with lzma.open(xz_filename, 'wt', preset=9) as f:
+                with open(args.json, 'r') as content_file:
+                    f.write(content_file.read())
+            if args.verbose: print("Compressed to " + xz_filename)
 
     # Output to start scripts
     if args.start_script:

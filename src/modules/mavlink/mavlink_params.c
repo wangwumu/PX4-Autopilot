@@ -50,6 +50,21 @@ PARAM_DEFINE_INT32(MAV_SYS_ID, 1);
 PARAM_DEFINE_INT32(MAV_COMP_ID, 1);
 
 /**
+ * MAVLink device ID (32-bit, factory-provisioned)
+ *
+ * Globally unique drone identifier recombined into the MAVLink v2 frame header
+ * (incompat/compat/sysid/compid bytes) and used for payload AES-256-GCM encryption.
+ * 0 disables the encrypted link (all traffic is dropped until set).
+ * The byte at bit24 (frame incompatFlag) must keep bit0 clear (deviceID & 0x01000000 == 0).
+ *
+ * @group MAVLink
+ * @min 0
+ * @max 2147483647
+ * @reboot_required true
+ */
+PARAM_DEFINE_INT32(MAV_DEVICE_ID, 0);
+
+/**
  * MAVLink protocol version
  * @group MAVLink
  * @value 1 Version 1 with auto-upgrade to v2 if detected

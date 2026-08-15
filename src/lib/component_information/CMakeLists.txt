@@ -38,6 +38,7 @@
 # 3: COMP_METADATA_TYPE_PERIPHERALS
 # 4: COMP_METADATA_TYPE_EVENTS
 # 5: COMP_METADATA_TYPE_ACTUATORS
+# 7: Custom airframes metadata type
 set(comp_metadata_types)
 set(comp_metadata_board "${PX4_BOARD_VENDOR}_${PX4_BOARD_MODEL}_${PX4_BOARD_LABEL}")
 set(s3_url "https://px4-travis.s3.amazonaws.com")
@@ -79,6 +80,30 @@ else()
 endif()
 list(APPEND comp_metadata_types "--type" "5,${PX4_BINARY_DIR}/actuators.json.xz,${comp_metadata_actuators_uri},${comp_metadata_actuators_uri_fallback},")
 
+# Airframes metadata (type 7)
+set(component_airframes_json ${PX4_BINARY_DIR}/airframes.json)
+add_custom_command(OUTPUT ${PX4_BINARY_DIR}/airframes.json.xz
+	COMMAND ${PYTHON_EXECUTABLE} ${PX4_SOURCE_DIR}/Tools/px_process_airframes.py
+		-a ${PX4_SOURCE_DIR}/ROMFS/px4fmu_common/init.d
+		--json ${component_airframes_json}
+		--compress
+	DEPENDS ${PX4_SOURCE_DIR}/Tools/px_process_airframes.py
+		${PX4_SOURCE_DIR}/Tools/px4airframes/jsonout.py
+	COMMENT "Generating airframes.json.xz"
+)
+add_custom_target(airframes_json DEPENDS ${PX4_BINARY_DIR}/airframes.json.xz)
+
+set(comp_metadata_airframes_uri_board "${s3_url}/Firmware/{version}/${comp_metadata_board}/airframes.json.xz")
+list(FIND config_romfs_extra_dependencies "airframes_json" index)
+if (${index} EQUAL -1)
+	set(comp_metadata_airframes_uri ${comp_metadata_airframes_uri_board})
+	set(comp_metadata_airframes_uri_fallback "")
+else()
+	set(comp_metadata_airframes_uri "mftp://etc/extras/airframes.json.xz")
+	set(comp_metadata_airframes_uri_fallback ${comp_metadata_airframes_uri_board})
+endif()
+list(APPEND comp_metadata_types "--type" "7,${PX4_BINARY_DIR}/airframes.json.xz,${comp_metadata_airframes_uri},${comp_metadata_airframes_uri_fallback},")
+
 
 set(component_general_json ${PX4_BINARY_DIR}/component_general.json)
 set(component_information_header ${CMAKE_CURRENT_BINARY_DIR}/checksums.h)
@@ -100,6 +125,8 @@ add_custom_command(OUTPUT ${component_general_json} ${component_general_json}.xz
 		events_json
 		${PX4_BINARY_DIR}/actuators.json.xz
 		actuators_json
+		${PX4_BINARY_DIR}/airframes.json.xz
+		airframes_json
 		ver_gen
 		generate_crc.py
 	COMMENT "Generating component_general.json and checksums.h"
