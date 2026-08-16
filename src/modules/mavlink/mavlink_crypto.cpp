@@ -51,6 +51,10 @@ extern "C" void libtomcrypt_init_min(void);
 static constexpr uint32_t MIN_PAYLOAD_BLOCK = 28;
 static constexpr uint32_t MAX_PLAIN_PAYLOAD = MAVLINK_MAX_PAYLOAD_LEN - MIN_PAYLOAD_BLOCK; // 227
 
+// MAVLink message IDs relevant to this layer.
+static constexpr uint32_t MSGID_HEARTBEAT = 0;      // MAVLINK_MSG_ID_HEARTBEAT
+static constexpr uint32_t MSGID_NONCE_SYNC = 80004; // custom (vtol_safety.xml, see mavlink_mavros扩展记录.md)
+
 static constexpr const char *KEY_FILE = "/fs/microsd/mavlink_key.bin";
 
 const uint8_t MavlinkCrypto::DEV_KEY[32] = {
@@ -185,27 +189,41 @@ void MavlinkCrypto::log_drop(bool &warned, const char *reason)
 	}
 }
 
-uint64_t MavlinkCrypto::next_tx_counter()
+bool MavlinkCrypto::next_tx_counter(uint64_t &counter)
 {
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
 
-	uint64_t counter = 0;
+	// Downlink even counters: smallest even value strictly greater than the
+	// downlink lastNonce. `_tx_last_nonce` is always even (init X+1, then +2),
+	// so +2 stays even. Only called once a link is established.
+	const uint64_t next = _tx_last_nonce + 2;
 
-	if (_last_nonce_set) {
-		counter = (_last_nonce & ~1ULL) + 2; // smallest even value strictly greater than last_nonce
-
-		if (counter <= _last_nonce) {
-			// uint64 wraparound (practically impossible): never reuse a GCM nonce.
-			PX4_ERR("mavlink_crypto: tx counter exhausted");
-			counter = _last_nonce;
-		}
+	if (next <= _tx_last_nonce) {
+		// uint64 wraparound (practically impossible): never reuse a GCM nonce.
+		// Caller must drop the frame (§2.5 COUNTER_MAX).
+		pthread_mutex_unlock(&g_mavlink_crypto_lock);
+		return false;
 	}
 
-	_last_nonce = counter;
-	_last_nonce_set = true;
+	_tx_last_nonce = next;
+	counter = next;
 	pthread_mutex_unlock(&g_mavlink_crypto_lock);
 
-	return counter;
+	return true;
+}
+
+void MavlinkCrypto::on_nonce_sync(uint64_t counter)
+{
+	pthread_mutex_lock(&g_mavlink_crypto_lock);
+
+	// Only meaningful once linked (the downlink base exists). Raising the base
+	// from a spoofed NONCE_SYNC can only skip counters (denial of service),
+	// never cause nonce reuse; in standby it is ignored entirely.
+	if (_tx_last_nonce_set && (counter > _tx_last_nonce)) {
+		_tx_last_nonce = counter;
+	}
+
+	pthread_mutex_unlock(&g_mavlink_crypto_lock);
 }
 
 bool MavlinkCrypto::aes_gcm(bool encrypt, const uint8_t nonce[12], const uint8_t *aad, uint32_t aad_len,
@@ -241,6 +259,45 @@ bool MavlinkCrypto::aes_gcm(bool encrypt, const uint8_t nonce[12], const uint8_t
 	return (err == CRYPT_OK) && (taglen == 16);
 }
 
+bool MavlinkCrypto::emit_plaintext_heartbeat(uint8_t *frame, uint32_t msgid)
+{
+	if (msgid != MSGID_HEARTBEAT) {
+		// Standby: no downlink nonce base exists yet, so nothing except the
+		// plaintext HEARTBEAT beacon can be transmitted.
+		if (!_warned_standby_drop) {
+			_warned_standby_drop = true;
+			PX4_ERR("mavlink_crypto: standby, dropping non-heartbeat msgid %u (no link)", (unsigned)msgid);
+		}
+
+		return false;
+	}
+
+	// Plaintext standby HEARTBEAT: write deviceID into the header, keep the
+	// payload plaintext (no counter/tag), and recompute CRC. Does not touch the
+	// nonce sequence (§2.5).
+	const uint8_t orig_len = frame[1];
+
+	uint8_t devid_be[4];
+	u32_to_be(_device_id, devid_be);
+
+	frame[2] = devid_be[0];
+	frame[3] = devid_be[1];
+	frame[5] = devid_be[2];
+	frame[6] = devid_be[3];
+
+	uint16_t crc = crc_calculate(&frame[1], MAVLINK_CORE_HEADER_LEN);
+	crc_accumulate_buffer(&crc, (const char *)&frame[10], orig_len);
+
+	const mavlink_msg_entry_t *entry = mavlink_get_msg_entry(msgid);
+	crc_accumulate(entry ? entry->crc_extra : 0, &crc);
+
+	frame[10 + orig_len] = (uint8_t)(crc & 0xFF);
+	frame[11 + orig_len] = (uint8_t)(crc >> 8);
+
+	// *total_len stays unchanged (10 + orig_len + 2).
+	return true;
+}
+
 bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 {
 	if (_device_id == 0) {
@@ -259,6 +316,13 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 
 	const uint8_t orig_len = frame[1];
 	const uint32_t msgid = (uint32_t)frame[7] | ((uint32_t)frame[8] << 8) | ((uint32_t)frame[9] << 16);
+
+	// Standby (link not yet established): there is no downlink nonce base, so
+	// nothing can be encrypted. Only the plaintext HEARTBEAT beacon goes out.
+	if (!_tx_last_nonce_set) {
+		return emit_plaintext_heartbeat(frame, msgid);
+	}
+
 	const uint8_t *payload = &frame[10];
 
 	uint8_t devid_be[4];
@@ -280,7 +344,16 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 
 	memcpy(plaintext, devid_be, 4);
 
-	const uint64_t counter = next_tx_counter();
+	uint64_t counter;
+
+	if (!next_tx_counter(counter)) {
+		if (!_warned_encrypt_failed) {
+			_warned_encrypt_failed = true;
+			PX4_ERR("mavlink_crypto: tx counter exhausted, refusing to send");
+		}
+
+		return false;
+	}
 
 	uint8_t counter_be[8];
 	u64_to_be(counter, counter_be);
@@ -335,13 +408,34 @@ bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg)
 		return false;
 	}
 
+	const uint32_t devid1 = ((uint32_t)msg->incompat_flags << 24) | ((uint32_t)msg->compat_flags << 16)
+				| ((uint32_t)msg->sysid << 8) | (uint32_t)msg->compid;
+
+	// NONCE_SYNC (msgid=80004): plaintext control frame from mavros that syncs the
+	// shared downlink counter (§2.5 "mavros 同步"). Consumed here, never delivered
+	// to the normal message handler.
+	if (msg->msgid == MSGID_NONCE_SYNC) {
+		if (devid1 != _device_id) {
+			log_drop(_warned_wrong_device, "NONCE_SYNC device mismatch");
+			return false;
+		}
+
+		if (msg->len < 8) {
+			log_drop(_warned_malformed, "NONCE_SYNC too short");
+			return false;
+		}
+
+		// MAVLink serializes uint64 little-endian; payload64[0] yields the native
+		// value on the (little-endian) targets PX4 runs on.
+		const uint64_t counter = ((const uint64_t *)_MAV_PAYLOAD(msg))[0];
+		on_nonce_sync(counter);
+		return false; // consumed
+	}
+
 	if (msg->len < MIN_PAYLOAD_BLOCK) {
 		log_drop(_warned_malformed, "malformed frame");
 		return false;
 	}
-
-	const uint32_t devid1 = ((uint32_t)msg->incompat_flags << 24) | ((uint32_t)msg->compat_flags << 16)
-				| ((uint32_t)msg->sysid << 8) | (uint32_t)msg->compid;
 
 	if (devid1 != _device_id) {
 		log_drop(_warned_wrong_device, "device ID mismatch");
@@ -356,7 +450,7 @@ bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg)
 
 	// Anti-replay pre-check: strictly increasing counter (first frame always accepted).
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
-	const bool fresh = !_last_nonce_set || (counter > _last_nonce);
+	const bool fresh = !_rx_last_nonce_set || (counter > _rx_last_nonce);
 	pthread_mutex_unlock(&g_mavlink_crypto_lock);
 
 	if (!fresh) {
@@ -387,12 +481,20 @@ bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg)
 
 	// Commit the nonce, re-checking under the lock so that a frame which went
 	// stale during the (slow) GCM auth above is rejected rather than delivered.
+	// Also establish the link on the first valid encrypted uplink frame (odd
+	// counter from QGC): the downlink base becomes the smallest even value > X.
+	// (§2.9 断连机制 will later reset these three fields to return to standby.)
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
-	const bool still_fresh = !_last_nonce_set || (counter > _last_nonce);
+	const bool still_fresh = !_rx_last_nonce_set || (counter > _rx_last_nonce);
 
 	if (still_fresh) {
-		_last_nonce = counter;
-		_last_nonce_set = true;
+		_rx_last_nonce = counter;
+		_rx_last_nonce_set = true;
+
+		if (!_tx_last_nonce_set && (counter & 1ULL)) {
+			_tx_last_nonce = counter + 1; // X+1, smallest even > X
+			_tx_last_nonce_set = true;
+		}
 	}
 
 	pthread_mutex_unlock(&g_mavlink_crypto_lock);

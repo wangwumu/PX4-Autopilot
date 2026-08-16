@@ -3229,7 +3229,8 @@ MavlinkReceiver::run()
 					if (mavlink_parse_char(_mavlink.get_channel(), buf[i], &msg, &_status)) {
 
 						// Decrypt the frame payload. Plaintext / wrong-key / replay / tampered
-						// frames are dropped here — this link only accepts encrypted frames.
+						// frames are dropped here; the NONCE_SYNC control frame (msgid 80004)
+						// is consumed here as well, never delivered to the normal handler.
 						if (!MavlinkCrypto::instance().decrypt_message(&msg)) {
 							continue;
 						}

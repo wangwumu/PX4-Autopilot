@@ -39,9 +39,10 @@
  * Implements the PX4 side of docs/10_deviceID与payload加密公共规范.md:
  *  - 32-bit deviceID recombined from the frame header bytes (inc/com/sys/comp)
  *  - payload block = counter(8B) || ciphertext || tag(16B), nonce = counter||deviceID
- *  - PX4 always uses even counters; `counter > last_nonce` anti-replay.
+ *  - downlink (PX4 + companion computer) even counters, uplink (QGC) odd counters
+ *  - standby plaintext HEARTBEAT beacon until the link is established
+ *  - NONCE_SYNC (msgid=80004) syncs the shared downlink counter
  */
-
 #pragma once
 
 #include <stdint.h>
@@ -67,19 +68,20 @@ public:
 	bool enabled() const { return _device_id != 0; }
 
 	/**
-	 * Encrypt a fully serialized MAVLink v2 frame in place.
+	 * Prepare a fully serialized MAVLink v2 frame for transmission.
 	 * `frame` holds [magic][len][inc][com][seq][sys][comp][msgid x3][payload][crc x2]
-	 * and *total_len is its size. On success the buffer is replaced by the encrypted
-	 * frame and *total_len updated. Returns false if not encryptable (crypto disabled
-	 * or not a v2 frame); the buffer is then left unchanged.
+	 * and *total_len is its size. On success the buffer is replaced by the outgoing
+	 * frame (encrypted, or a plaintext standby HEARTBEAT) and *total_len updated.
+	 * Returns false if not transmittable (crypto disabled, non-v2, or a non-heartbeat
+	 * frame while still in standby); the buffer is then left unchanged.
 	 */
 	bool encrypt_frame(uint8_t *frame, uint16_t *total_len);
 
 	/**
-	 * Decrypt a message that mavlink_parse_char() has just extracted. On success the
+	 * Process a message that mavlink_parse_char() has just extracted. On success the
 	 * message is rebuilt into the plain standard message (len reduced, payload replaced).
 	 * Returns false if the frame must be dropped (plaintext / wrong device / replay /
-	 * tampered / degraded empty frame).
+	 * tampered / degraded empty frame / consumed NONCE_SYNC control frame).
 	 */
 	bool decrypt_message(mavlink_message_t *msg);
 
@@ -92,7 +94,18 @@ public:
 private:
 	MavlinkCrypto() = default;
 
-	uint64_t next_tx_counter();
+	/**
+	 * Allocate the next downlink (even) counter. Only valid once a link is
+	 * established (_tx_last_nonce_set). Returns false on uint64 wraparound —
+	 * the caller must then drop the frame rather than ever reuse a nonce.
+	 */
+	bool next_tx_counter(uint64_t &counter);
+
+	/** Raise the downlink base from a NONCE_SYNC counter (max, post-link only). */
+	void on_nonce_sync(uint64_t counter);
+
+	/** Emit the standby plaintext HEARTBEAT beacon (deviceID in header, no crypto). */
+	bool emit_plaintext_heartbeat(uint8_t *frame, uint32_t msgid);
 
 	bool aes_gcm(bool encrypt, const uint8_t nonce[12], const uint8_t *aad, uint32_t aad_len,
 		     const uint8_t *in, uint32_t in_len, uint8_t *out, uint8_t tag[16]);
@@ -105,8 +118,10 @@ private:
 
 	uint32_t _device_id{0};
 	uint8_t _key[32]{};
-	uint64_t _last_nonce{0};
-	bool _last_nonce_set{false};
+	uint64_t _rx_last_nonce{0};     ///< anti-replay floor (received frames, global)
+	bool _rx_last_nonce_set{false};
+	uint64_t _tx_last_nonce{0};     ///< downlink even send base; unset = standby
+	bool _tx_last_nonce_set{false};
 	int _cipher_idx{-1};
 	bool _tomcrypt_initialized{false};
 	bool _warned_no_v2{false};
@@ -119,5 +134,6 @@ private:
 	bool _warned_auth_failed{false};
 	bool _warned_binding_failed{false};
 	bool _warned_empty_frame{false};
+	bool _warned_standby_drop{false};
 	uint32_t _drop_count{0};
 };
