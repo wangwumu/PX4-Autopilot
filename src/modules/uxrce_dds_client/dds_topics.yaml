@@ -5,6 +5,9 @@
 #####
 publications:
 
+  - topic: /fmu/out/device_credential
+    type: vtol_msgs::msg::DeviceCredential
+
   - topic: /fmu/out/register_ext_component_reply
     type: px4_msgs::msg::RegisterExtComponentReply
 
@@ -110,6 +113,12 @@ publications:
 
 # Create uORB::Publication
 subscriptions:
+  - topic: /fmu/in/device_credential_request
+    type: vtol_msgs::msg::DeviceCredentialRequest
+
+  - topic: /fmu/in/device_credential_ack
+    type: vtol_msgs::msg::DeviceCredentialAck
+
   - topic: /fmu/in/register_ext_component_request
     type: px4_msgs::msg::RegisterExtComponentRequest
 

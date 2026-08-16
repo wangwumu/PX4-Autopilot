@@ -1,0 +1,14 @@
+menuconfig MODULES_DEVICE_CREDENTIAL
+	bool "device_credential"
+	default n
+	---help---
+		Companion computer credential handshake server: answers
+		device_credential_request uORB messages with the drone's device ID and
+		MAVLink AES key (see docs/10 §2.8).
+
+menuconfig USER_DEVICE_CREDENTIAL
+	bool "device_credential running as userspace module"
+	default y
+	depends on BOARD_PROTECTED && MODULES_DEVICE_CREDENTIAL
+	---help---
+		Put device_credential in userspace memory

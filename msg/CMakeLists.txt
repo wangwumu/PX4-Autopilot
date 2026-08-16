@@ -63,6 +63,9 @@ set(msg_files
 	DebugKeyValue.msg
 	DebugValue.msg
 	DebugVect.msg
+	DeviceCredential.msg
+	DeviceCredentialAck.msg
+	DeviceCredentialRequest.msg
 	DifferentialPressure.msg
 	DistanceSensor.msg
 	DistanceSensorModeChangeRequest.msg

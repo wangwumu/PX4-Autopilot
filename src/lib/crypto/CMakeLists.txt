@@ -74,6 +74,17 @@ if (NOT DEFINED CONFIG_BUILD_FLAT AND "${PX4_PLATFORM}" MATCHES "nuttx")
 	target_compile_options(libtomcrypt PUBLIC -DXMALLOC=kmm_malloc -DXFREE=kmm_free -DXREALLOC=kmm_realloc -DXCALLOC=kmm_calloc)
 endif()
 
+# Shared device credential loader: validated device ID + AES key, used by both
+# the MAVLink crypto layer and the companion credential handshake.
+px4_add_library(mavlink_credential
+	mavlink_credential.cpp
+)
+
+target_include_directories(mavlink_credential
+	PUBLIC
+		${CMAKE_CURRENT_SOURCE_DIR}
+)
+
 # monocypher + libtommath (used by the sw_crypto backend) are only built when
 # the full PX4 crypto stack is enabled.
 if (DEFINED PX4_CRYPTO)

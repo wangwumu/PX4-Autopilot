@@ -142,6 +142,7 @@ px4_add_module(
 		variable_length_ringbuffer
 		version
 		libtomcrypt
+		mavlink_credential
 	UNITY_BUILD
 	)
 

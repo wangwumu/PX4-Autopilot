@@ -165,6 +165,19 @@ ros2 launch vtol_bringup vtol_full.launch.py \
 
 `px4_bridge.launch.py` 曾给 Router 传 `fcu_protocol: 'v2.0'`，但该参数是 **UAS 插件**（`mavros_uas.cpp:85`）的参数，Router 的参数回调只认 `fcu_urls/gcs_urls/uas_urls`，收到 `fcu_protocol` 会返回 "unknown parameter"。已删除。
 
+## 2.6 device_credential 握手消息契约 ✅ 规格已定（PX4 侧待实现）
+
+companion computer 经本地 DDS/uXRCE 向 PX4 握手获取 deviceID 与密钥的**消息契约**已在文档 10 §2.8 完整定义（§2.8.2 精确字段 / §2.8.7 实现约定），此处只列 CC 侧需要对齐的要点：
+
+| 消息 | vtol_msgs 类型 | 方向 | 字段（顺序即 type hash 顺序） |
+|------|----------------|------|------|
+| 凭证请求 | `vtol_msgs::msg::DeviceCredentialRequest` | CC → PX4 | `uint64 timestamp`、`uint32 req_id` |
+| 凭证应答 | `vtol_msgs::msg::DeviceCredential` | PX4 → CC | `uint64 timestamp`、`uint32 device_id`、`uint8[32] aes_key`、`uint32 req_id`、`uint32 cred_seq` |
+| 凭证确认 | `vtol_msgs::msg::DeviceCredentialAck` | CC → PX4 | `uint64 timestamp`、`uint32 cred_seq` |
+
+- **type hash 以 CC 侧 `vtol_msgs` 为权威**，PX4 uORB 逐字段镜像（含 `uint64 timestamp`，用纯 `uint64` 而非 `builtin_interfaces/Time`）。
+- PX4 侧 uORB `.msg` 与 `dds_topics.yaml` 配置见文档 10 §2.8.2。
+
 ---
 
 # 文件索引
@@ -187,4 +200,4 @@ ros2 launch vtol_bringup vtol_full.launch.py \
 | nonce 同步扩展报文 | 高 | mavros 提取 counter 广播，消息定义 + PX4/abc_vtol 解析 |
 | mavros nonce 重复检查 | 高 | 单一 lastNonce，拦截 counter ≤ lastNonce |
 | 断连专用指令 + 应答 | 中 | 任务结束/解绑，文档 10 §2.9 |
-| PX4 侧握手服务端 | 高 | device_credential uORB + uXRCE-DDS 配置（文档 10 §2.8） |
+| PX4 侧握手服务端 | 高 | device_credential uORB + uXRCE-DDS 配置 + 独立模块 `device_credential`（规格已定，见文档 10 §2.8.2 / §2.8.7） |

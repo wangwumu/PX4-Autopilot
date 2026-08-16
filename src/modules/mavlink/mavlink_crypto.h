@@ -85,9 +85,6 @@ public:
 	 */
 	bool decrypt_message(mavlink_message_t *msg);
 
-	/** Built-in development key (32 bytes), used when no SD key file is present. */
-	static const uint8_t DEV_KEY[32];
-
 	/** Frame growth introduced by encryption: counter(8) + deviceID(4) + tag(16). */
 	static constexpr uint32_t OVERHEAD = 28;
 

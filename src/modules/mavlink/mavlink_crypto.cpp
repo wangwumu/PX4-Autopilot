@@ -33,15 +33,14 @@
 
 #include "mavlink_crypto.h"
 
-#include <errno.h>
-#include <fcntl.h>
 #include <pthread.h>
 #include <string.h>
-#include <unistd.h>
 
 #include <px4_platform_common/log.h>
 
 #include "mavlink_bridge_header.h"
+
+#include <mavlink_credential.h>
 
 #include <tomcrypt.h>
 
@@ -54,15 +53,6 @@ static constexpr uint32_t MAX_PLAIN_PAYLOAD = MAVLINK_MAX_PAYLOAD_LEN - MIN_PAYL
 // MAVLink message IDs relevant to this layer.
 static constexpr uint32_t MSGID_HEARTBEAT = 0;      // MAVLINK_MSG_ID_HEARTBEAT
 static constexpr uint32_t MSGID_NONCE_SYNC = 80004; // custom (vtol_safety.xml, see mavlink_mavros扩展记录.md)
-
-static constexpr const char *KEY_FILE = "/fs/microsd/mavlink_key.bin";
-
-const uint8_t MavlinkCrypto::DEV_KEY[32] = {
-	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
-	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
-};
 
 // Shared across every MAVLink instance (one drone, one key, one global nonce sequence).
 static pthread_mutex_t g_mavlink_crypto_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -102,68 +92,14 @@ MavlinkCrypto &MavlinkCrypto::instance()
 
 void MavlinkCrypto::configure(uint32_t device_id)
 {
-	// The deviceID high byte is written into the MAVLink incompat_flags byte,
-	// whose bit0 is the SIGNED flag — bit24 must stay 0 (see docs/11).
-	if (device_id & 0x01000000u) {
-		PX4_ERR("mavlink_crypto: invalid device ID 0x%08x (bit24 must be 0), disabling encryption", (unsigned)device_id);
-		device_id = 0;
-	}
-
-	uint8_t key[32];
-	bool key_loaded = false;
-	bool key_file_missing = false;
-
-	const int fd = open(KEY_FILE, O_RDONLY);
-
-	if (fd >= 0) {
-		size_t total = 0;
-
-		while (total < sizeof(key)) {
-			const ssize_t n = read(fd, key + total, sizeof(key) - total);
-
-			if (n <= 0) {
-				break;
-			}
-
-			total += (size_t)n;
-		}
-
-		close(fd);
-
-		if (total == sizeof(key)) {
-			key_loaded = true;
-
-		} else {
-			// A present-but-truncated/corrupt key file must not silently fall
-			// back to the public dev key — fail closed.
-			PX4_ERR("mavlink_crypto: key file %s short/corrupt (%u/%u bytes), refusing dev-key fallback",
-				KEY_FILE, (unsigned)total, (unsigned)sizeof(key));
-		}
-
-	} else {
-		key_file_missing = (errno == ENOENT);
-
-		if (!key_file_missing) {
-			PX4_ERR("mavlink_crypto: cannot open key file %s: %s", KEY_FILE, strerror(errno));
-		}
-	}
-
-	if (!key_loaded) {
-		if (key_file_missing) {
-			// Only a genuinely missing key file falls back to the dev key.
-			memcpy(key, DEV_KEY, sizeof(key));
-			PX4_ERR("mavlink_crypto: no key file %s, using built-in development key", KEY_FILE);
-
-		} else {
-			// Key load failed for a non-missing-file reason: disable crypto.
-			device_id = 0;
-			PX4_ERR("mavlink_crypto: key not loaded, encryption disabled");
-		}
-	}
+	// Shared loader: validates the device ID and reads the key (dev-key fallback /
+	// fail-closed). Same source the companion handshake uses (mavlink_credential).
+	mavlink_credential_s cred;
+	mavlink_credential_load(device_id, cred);
 
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
-	_device_id = device_id;
-	memcpy(_key, key, sizeof(key));
+	_device_id = cred.device_id;
+	memcpy(_key, cred.key, sizeof(_key));
 
 	if (!_tomcrypt_initialized) {
 		libtomcrypt_init_min();

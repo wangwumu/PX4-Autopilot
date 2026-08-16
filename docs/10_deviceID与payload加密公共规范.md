@@ -289,13 +289,64 @@ companion computer（本方案中为 **abc_vtol**，PX4 的 ROS2 上位机）需
 
 ### 2.8.2 消息定义
 
-握手消息为 PX4 侧自定义 uORB 消息，经 uXRCE-DDS 桥接到 ROS2；ROS2 侧为 `vtol_msgs` 消息，**type hash 必须与 PX4 uORB 一致**（否则 DDS 无法匹配）。
+握手消息为 PX4 侧自定义 uORB 消息，经 uXRCE-DDS 桥接到 ROS2。**type hash 由发起侧（CC，即 ROS2 `vtol_msgs` 包）定义并生成，PX4 侧 uORB 消息按 CC 定义逐字段镜像**（字段名、类型、顺序完全一致），保证两侧 XTypes type hash 一致、DDS 可匹配。使用 `vtol_msgs`（而非 `px4_msgs`）以区分本系统自定义消息与 PX4 原生消息，便于维护与纠错。
 
-| 消息 | ROS2 类型 | 方向 | 话题 | 字段 |
-| ------ | ----------- | ------ | ------ | ------ |
-| 凭证请求 | `DeviceCredentialRequest` | CC → PX4 | `/fmu/in/device_credential_request` | `uint32 req_id` 请求序号 |
-| 凭证应答 | `DeviceCredential` | PX4 → CC | `/fmu/out/device_credential` | `uint32 device_id`、`uint8[32] aes_key`、`uint32 req_id`（回显）、`uint32 cred_seq`（凭证序号） |
-| 凭证确认 | `DeviceCredentialAck` | CC → PX4 | `/fmu/in/device_credential_ack` | `uint32 cred_seq`（确认的凭证序号） |
+**三则消息的权威字段定义（CC 侧 `vtol_msgs` 与 PX4 侧 uORB 两侧镜像，`uint64 timestamp` 首字段为 PX4 uORB 惯例，两侧一致；timestamp 用纯 `uint64`，**不是** ROS2 的 `builtin_interfaces/Time`，否则 type hash 不匹配）**：
+
+| 消息 | 字段（顺序即 type hash 顺序） | 方向 | DDS 话题 |
+| ------ | ------------------------------- | ------ | ------ |
+| 凭证请求 `DeviceCredentialRequest` | `uint64 timestamp`、`uint32 req_id` | CC → PX4 | `/fmu/in/device_credential_request` |
+| 凭证应答 `DeviceCredential` | `uint64 timestamp`、`uint32 device_id`、`uint8[32] aes_key`、`uint32 req_id`、`uint32 cred_seq` | PX4 → CC | `/fmu/out/device_credential` |
+| 凭证确认 `DeviceCredentialAck` | `uint64 timestamp`、`uint32 cred_seq` | CC → PX4 | `/fmu/in/device_credential_ack` |
+
+- `req_id`：CC 每次发起请求递增的序号，PX4 原样回显（供 CC 匹配应答）。
+- `cred_seq`：PX4 凭证序号；同一未确认凭证保持不变（重发幂等），收到新请求时递增。
+- `device_id`：= `MAV_DEVICE_ID` 参数值（§2.8.7）。
+- `aes_key`：通信密钥，= `/fs/microsd/mavlink_key.bin`（§2.8.7）。
+
+**PX4 侧 uORB `.msg` 文件（`msg/` 目录，与上表字段一一对应）**：
+
+`msg/DeviceCredentialRequest.msg`：
+```
+uint64 timestamp   # time since system start (microseconds)
+
+uint32 req_id
+```
+
+`msg/DeviceCredential.msg`：
+```
+uint64 timestamp   # time since system start (microseconds)
+
+uint32 device_id
+uint8[32] aes_key
+uint32 req_id
+uint32 cred_seq
+```
+
+`msg/DeviceCredentialAck.msg`：
+```
+uint64 timestamp   # time since system start (microseconds)
+
+uint32 cred_seq
+```
+
+**CC 侧 `vtol_msgs` `.msg`**：字段与上表完全一致（含 `uint64 timestamp`，顺序不变），消息名用 CamelCase（`DeviceCredentialRequest` / `DeviceCredential` / `DeviceCredentialAck`）。
+
+**PX4 侧 `uxrce_dds_client/dds_topics.yaml` 配置**（`generate_dds_topics.py` 不硬编码 `px4_msgs`，`type:` 写 `vtol_msgs::msg::Xxx` 即可；生成器按 snake_case 定位 uORB 消息，DDS 类型名为 `vtol_msgs::msg::dds_::Xxx_`）：
+
+```yaml
+publications:
+  - topic: /fmu/out/device_credential
+    type: vtol_msgs::msg::DeviceCredential
+
+subscriptions:
+  - topic: /fmu/in/device_credential_request
+    type: vtol_msgs::msg::DeviceCredentialRequest
+  - topic: /fmu/in/device_credential_ack
+    type: vtol_msgs::msg::DeviceCredentialAck
+```
+
+> 握手消息为事件型、非高频，无需 `rate_limit`；QoS 用默认 reliable。
 
 ### 2.8.3 握手流程（三向握手，CC 发起）
 
@@ -335,7 +386,22 @@ CC (abc_vtol)                              PX4
 | 环节 | 状态 | 说明 |
 |------|------|------|
 | CC 侧（abc_vtol） | ✅ 已实现 | `vtol_communication/mavlink_crypto_node.py`：握手状态机 + 订阅 `/uas1/mavlink_source` 解密 + 加密发布 `/uas1/mavlink_sink`；核心加解密 `mavlink_crypto.py` |
-| PX4 侧 | ⏳ 待实现 | 自定义 uORB 消息 + uXRCE-DDS client 发布/订阅配置 + 握手服务端逻辑（校验 req_id、发布 credential、接收 ack） |
+| PX4 侧 | ⏳ 待实现（规格已定，见 §2.8.7） | ① 新增三个 uORB 消息（§2.8.2）；② `dds_topics.yaml` 加 3 个 topic（§2.8.2）；③ 共享库 `mavlink_credential` 统一加载 deviceID/密钥；④ 独立模块 `src/modules/device_credential/` 实现握手服务端逻辑（§2.8.7） |
+
+### 2.8.7 PX4 侧实现约定（已定）
+
+针对 PX4 侧握手服务端的实现方式，明确以下约定（消除二义性）：
+
+| 项 | 约定 |
+| --- | --- |
+| **密钥来源** | 与 MAVLink 加密共用同一把密钥：`/fs/microsd/mavlink_key.bin`（缺失回退内置 dev-key），经共享库 `mavlink_credential`（`src/lib/crypto/mavlink_credential.{h,cpp}`）统一加载，`MavlinkCrypto` 与握手服务端均调用它，**不得另建密钥存储** |
+| **device_id 来源** | `MAV_DEVICE_ID` 参数（即 `MavlinkCrypto` 校验后的值，含 §1.4 的 bit24=0 约束） |
+| **服务端落点** | **独立模块** `src/modules/device_credential/`（不并入 `uxrce_dds_client` / `mavlink`），与原生模块区分、便于维护与纠错 |
+| **职责划分** | `uxrce_dds_client` 仅负责传输（`dds_topics.yaml` 加 3 个 topic，见 §2.8.2）；握手逻辑（订阅 request → 发布 credential → 订阅 ack + 重试）由独立模块 `device_credential` 实现 |
+| **req_id 语义** | PX4 侧**回显不校验**：收到合法 request 即回显 req_id 并发布 credential；req_id 的匹配/单调性校验是 CC 侧职责（§2.8.3 第 3 步） |
+| **cred_seq 语义** | 同一未确认凭证保持不变（重发幂等）；收到新的（不同 req_id 的）请求时递增 |
+| **握手完成后的行为** | PX4 收到 ack 后**停止重发**该凭证，无其他附加动作（PX4 不依赖握手状态 gate 任何 MAVLink 行为；是否 gate 是 CC 侧职责，见 §2.8.4） |
+| **QoS** | 默认 reliable（事件型、非高频，无需 `rate_limit`） |
 
 ## 2.9 断连机制（任务完成 / 解绑）—— TODO 待实现
 
