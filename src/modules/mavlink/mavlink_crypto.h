@@ -132,5 +132,6 @@ private:
 	bool _warned_binding_failed{false};
 	bool _warned_empty_frame{false};
 	bool _warned_standby_drop{false};
+	bool _warned_nonce_sync_odd{false};
 	uint32_t _drop_count{0};
 };

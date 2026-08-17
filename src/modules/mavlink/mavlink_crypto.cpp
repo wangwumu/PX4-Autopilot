@@ -150,6 +150,18 @@ bool MavlinkCrypto::next_tx_counter(uint64_t &counter)
 
 void MavlinkCrypto::on_nonce_sync(uint64_t counter)
 {
+	// Downlink counters are always even (PX4 +2, abc_vtol +100). Reject odd
+	// counters: a forged odd NONCE_SYNC would drive the downlink base odd, so the
+	// next +2 counter would collide with the uplink odd sequence (nonce reuse).
+	if (counter & 1ULL) {
+		if (!_warned_nonce_sync_odd) {
+			_warned_nonce_sync_odd = true;
+			PX4_ERR("mavlink_crypto: rejecting odd NONCE_SYNC counter");
+		}
+
+		return;
+	}
+
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
 
 	// Only meaningful once linked (the downlink base exists). Raising the base
