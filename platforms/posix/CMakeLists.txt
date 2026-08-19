@@ -205,6 +205,7 @@ elseif("${PX4_BOARD}" MATCHES "sitl")
 	install(
 		DIRECTORY
 			${PROJECT_SOURCE_DIR}/Tools/simulation/gz/models
+			${PROJECT_SOURCE_DIR}/Tools/simulation/gz_abc_models/models
 			${PROJECT_SOURCE_DIR}/Tools/simulation/gz/worlds
 		DESTINATION
 			${PROJECT_NAME}/Tools/simulation/gazebo-classic/sitl_gazebo-classic
