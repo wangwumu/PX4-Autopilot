@@ -109,3 +109,11 @@ src/systemcmds/topic_listener/listener_generated.cpp
 # colcon
 log/
 keys/
+
+# 本 fork 未跟踪的插件/板级 SDK 目录（不纳入版本控制）
+.vscode/
+boards/modalai/voxl2/libfc-sensor-api/
+boards/modalai/voxl2/src/lib/
+src/lib/rl_tools/
+src/modules/mc_raptor/
+src/modules/simulation/gz_plugins/optical_flow/PX4-OpticalFlow/
