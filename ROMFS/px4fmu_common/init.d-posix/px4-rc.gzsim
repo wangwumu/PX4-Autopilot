@@ -133,8 +133,16 @@ if [ -n "${PX4_SIM_MODEL#*gz_}" ] && [ -z "${PX4_GZ_MODEL_NAME}" ]; then
 
 	echo "INFO  [init] Spawning Gazebo model"
 
+	# Custom models live in PX4_GZ_ABC_MODELS (Tools/simulation/gz_abc_models),
+	# standard ones in PX4_GZ_MODELS. Prefer the custom dir when it has the model.
+	if [ -n "${PX4_GZ_ABC_MODELS}" ] && [ -d "${PX4_GZ_ABC_MODELS}/${MODEL_NAME}" ]; then
+		MODEL_URI="file://${PX4_GZ_ABC_MODELS}/${MODEL_NAME}/model.sdf"
+	else
+		MODEL_URI="file://${PX4_GZ_MODELS}/${MODEL_NAME}/model.sdf"
+	fi
+
 	# include the actual SDF in this one, containing the pose if given
-	sdf_str="<sdf version=\"1.6\"> <include> <uri>file://${PX4_GZ_MODELS}/${MODEL_NAME}/model.sdf</uri> ${sdf_pose_str} </include> </sdf>"
+	sdf_str="<sdf version=\"1.6\"> <include> <uri>${MODEL_URI}</uri> ${sdf_pose_str} </include> </sdf>"
 
 	# Spawn model
 	${gz_command} service -s "/world/${PX4_GZ_WORLD}/create" --reqtype gz.msgs.EntityFactory \
