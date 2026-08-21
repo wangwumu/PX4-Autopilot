@@ -36,7 +36,7 @@
  *
  * MAVLink deviceID (32-bit) + payload AES-256-GCM encryption layer.
  *
- * Implements the PX4 side of docs/10_deviceID与payload加密公共规范.md:
+ * Implements the PX4 side of docs/docs/60820.0/10_deviceID与payload加密公共规范.md:
  *  - 32-bit deviceID recombined from the frame header bytes (inc/com/sys/comp)
  *  - payload block = counter(8B) || ciphertext || tag(16B), nonce = counter||deviceID
  *  - downlink (PX4 + companion computer) even counters, uplink (QGC) odd counters
@@ -58,14 +58,24 @@ public:
 
 	/**
 	 * Configure the device identifier and load the 32-byte key.
-	 * The key is read from /fs/microsd/mavlink_key.bin and falls back to a built-in
-	 * development key (TODO: production must use a hardware secure keystore).
+	 * The key is read from PX4_STORAGEDIR/mavlink_key.bin (/fs/microsd on NuttX,
+	 * runtime rootfs on POSIX/SITL) and falls back to a built-in development key
+	 * (TODO: production must use a hardware secure keystore).
 	 * Idempotent: counters are never reset.
 	 */
 	void configure(uint32_t device_id);
 
 	/** True once a non-zero device ID is configured. */
 	bool enabled() const { return _device_id != 0; }
+
+	/**
+	 * Read-only access for the companion credential handshake server (docs/docs/60820.0/10_deviceID与payload加密公共规范.md §2.8.7),
+	 * so it serves the exact same device ID / key the MAVLink crypto layer uses.
+	 * `key()` copies the 32-byte key into the caller buffer under the lock, so a
+	 * concurrent configure() cannot race with the reader.
+	 */
+	uint32_t device_id() const;
+	void key(uint8_t out[32]) const;
 
 	/**
 	 * Prepare a fully serialized MAVLink v2 frame for transmission.
@@ -93,8 +103,10 @@ private:
 
 	/**
 	 * Allocate the next downlink (even) counter. Only valid once a link is
-	 * established (_tx_last_nonce_set). Returns false on uint64 wraparound —
-	 * the caller must then drop the frame rather than ever reuse a nonce.
+	 * established (_tx_last_nonce_set). Returns false on uint64 wraparound or once
+	 * the counter would reach COUNTER_MAX (§2.5 nonce-budget exhaustion) — the
+	 * caller must then drop the frame and stop sending rather than reuse a nonce.
+	 * The budget case is the practically reachable one.
 	 */
 	bool next_tx_counter(uint64_t &counter);
 
@@ -114,7 +126,7 @@ private:
 	void log_drop(bool &warned, const char *reason);
 
 	uint32_t _device_id{0};
-	uint8_t _key[32]{};
+	uint8_t _key[32] {};
 	uint64_t _rx_last_nonce{0};     ///< anti-replay floor (received frames, global)
 	bool _rx_last_nonce_set{false};
 	uint64_t _tx_last_nonce{0};     ///< downlink even send base; unset = standby
@@ -124,6 +136,8 @@ private:
 	bool _warned_no_v2{false};
 	bool _warned_cipher{false};
 	bool _warned_encrypt_failed{false};
+	bool _warned_tx_counter_exhausted{false};
+	bool _warned_nonce_sync_budget{false};
 	bool _warned_unconfigured{false};
 	bool _warned_malformed{false};
 	bool _warned_wrong_device{false};

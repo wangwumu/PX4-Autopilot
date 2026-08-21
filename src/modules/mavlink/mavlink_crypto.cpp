@@ -50,6 +50,15 @@ extern "C" void libtomcrypt_init_min(void);
 static constexpr uint32_t MIN_PAYLOAD_BLOCK = 28;
 static constexpr uint32_t MAX_PLAIN_PAYLOAD = MAVLINK_MAX_PAYLOAD_LEN - MIN_PAYLOAD_BLOCK; // 227
 
+// §2.5: downlink nonce budget. Stop sending once the counter reaches 2^62 and require
+// a fresh link (new key / re-handshake) — never cross this boundary.
+static constexpr uint64_t COUNTER_MAX = (1ULL << 62);
+
+// §2.5: on link establishment the downlink lastNonce is initialized to X + DOWNLINK_INIT_OFFSET,
+// where X is the first uplink (odd) counter. 1001 is odd, so X+1001 stays even; the +1001 offset
+// gives the downlink sequence a 500-frame lead over the uplink (§2.5 / §3.2.4.2).
+static constexpr uint64_t DOWNLINK_INIT_OFFSET = 1001;
+
 // MAVLink message IDs relevant to this layer.
 static constexpr uint32_t MSGID_HEARTBEAT = 0;      // MAVLINK_MSG_ID_HEARTBEAT
 static constexpr uint32_t MSGID_NONCE_SYNC = 80004; // custom (vtol_safety.xml, see mavlink_mavros扩展记录.md)
@@ -109,6 +118,21 @@ void MavlinkCrypto::configure(uint32_t device_id)
 	pthread_mutex_unlock(&g_mavlink_crypto_lock);
 }
 
+uint32_t MavlinkCrypto::device_id() const
+{
+	pthread_mutex_lock(&g_mavlink_crypto_lock);
+	const uint32_t id = _device_id;
+	pthread_mutex_unlock(&g_mavlink_crypto_lock);
+	return id;
+}
+
+void MavlinkCrypto::key(uint8_t out[32]) const
+{
+	pthread_mutex_lock(&g_mavlink_crypto_lock);
+	memcpy(out, _key, sizeof(_key));
+	pthread_mutex_unlock(&g_mavlink_crypto_lock);
+}
+
 void MavlinkCrypto::make_nonce(uint64_t counter, uint8_t nonce[12])
 {
 	u64_to_be(counter, nonce);
@@ -130,13 +154,20 @@ bool MavlinkCrypto::next_tx_counter(uint64_t &counter)
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
 
 	// Downlink even counters: smallest even value strictly greater than the
-	// downlink lastNonce. `_tx_last_nonce` is always even (init X+1, then +2),
-	// so +2 stays even. Only called once a link is established.
+	// downlink lastNonce. `_tx_last_nonce` is always even (init X + DOWNLINK_INIT_OFFSET,
+	// then +2), so +2 stays even. Only called once a link is established.
 	const uint64_t next = _tx_last_nonce + 2;
 
 	if (next <= _tx_last_nonce) {
 		// uint64 wraparound (practically impossible): never reuse a GCM nonce.
-		// Caller must drop the frame (§2.5 COUNTER_MAX).
+		// Caller must drop the frame.
+		pthread_mutex_unlock(&g_mavlink_crypto_lock);
+		return false;
+	}
+
+	if (next >= COUNTER_MAX) {
+		// §2.5: nonce budget exhausted — stop sending, require a fresh link
+		// (new key / re-handshake). Caller must drop the frame.
 		pthread_mutex_unlock(&g_mavlink_crypto_lock);
 		return false;
 	}
@@ -166,8 +197,20 @@ void MavlinkCrypto::on_nonce_sync(uint64_t counter)
 
 	// Only meaningful once linked (the downlink base exists). Raising the base
 	// from a spoofed NONCE_SYNC can only skip counters (denial of service),
-	// never cause nonce reuse; in standby it is ignored entirely.
+	// never cause nonce reuse; in standby it is ignored entirely. Reject counters
+	// at/above the 2^62 nonce budget — accepting one would permanently stall the
+	// downlink (§2.5), since no later counter would pass next_tx_counter().
 	if (_tx_last_nonce_set && (counter > _tx_last_nonce)) {
+		if (counter >= COUNTER_MAX) {
+			if (!_warned_nonce_sync_budget) {
+				_warned_nonce_sync_budget = true;
+				PX4_ERR("mavlink_crypto: rejecting NONCE_SYNC counter >= 2^62 (nonce budget)");
+			}
+
+			pthread_mutex_unlock(&g_mavlink_crypto_lock);
+			return;
+		}
+
 		_tx_last_nonce = counter;
 	}
 
@@ -285,6 +328,7 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 		pt_len = 4;
 		PX4_WARN("mavlink_crypto: msgid %u oversized (%u bytes), sending degraded empty frame",
 			 (unsigned)msgid, (unsigned)orig_len);
+
 	} else {
 		memcpy(plaintext + 4, payload, orig_len);
 		pt_len = 4 + orig_len;
@@ -295,9 +339,9 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 	uint64_t counter;
 
 	if (!next_tx_counter(counter)) {
-		if (!_warned_encrypt_failed) {
-			_warned_encrypt_failed = true;
-			PX4_ERR("mavlink_crypto: tx counter exhausted, refusing to send");
+		if (!_warned_tx_counter_exhausted) {
+			_warned_tx_counter_exhausted = true;
+			PX4_ERR("mavlink_crypto: tx counter at 2^62 nonce budget, refusing to send; link must be re-keyed");
 		}
 
 		return false;
@@ -430,8 +474,8 @@ bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg)
 	// Commit the nonce, re-checking under the lock so that a frame which went
 	// stale during the (slow) GCM auth above is rejected rather than delivered.
 	// Also establish the link on the first valid encrypted uplink frame (odd
-	// counter from QGC): the downlink base becomes the smallest even value > X.
-	// (§2.9 断连机制 will later reset these three fields to return to standby.)
+	// counter X from QGC): the downlink base becomes X + DOWNLINK_INIT_OFFSET (§2.5).
+	// (§2.9 断连机制 will later reset these nonce fields to return to standby.)
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
 	const bool still_fresh = !_rx_last_nonce_set || (counter > _rx_last_nonce);
 
@@ -440,7 +484,9 @@ bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg)
 		_rx_last_nonce_set = true;
 
 		if (!_tx_last_nonce_set && (counter & 1ULL)) {
-			_tx_last_nonce = counter + 1; // X+1, smallest even > X
+			// Link established on the first uplink odd counter X. Downlink base =
+			// X + DOWNLINK_INIT_OFFSET (even, gives downlink a lead over uplink, §2.5).
+			_tx_last_nonce = counter + DOWNLINK_INIT_OFFSET;
 			_tx_last_nonce_set = true;
 		}
 	}

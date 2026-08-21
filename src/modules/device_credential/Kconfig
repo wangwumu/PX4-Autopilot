@@ -4,7 +4,7 @@ menuconfig MODULES_DEVICE_CREDENTIAL
 	---help---
 		Companion computer credential handshake server: answers
 		device_credential_request uORB messages with the drone's device ID and
-		MAVLink AES key (see docs/10 §2.8).
+		MAVLink AES key (see docs/docs/60820.0/10_deviceID与payload加密公共规范.md §2.8).
 
 menuconfig USER_DEVICE_CREDENTIAL
 	bool "device_credential running as userspace module"

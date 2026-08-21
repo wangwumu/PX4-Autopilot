@@ -46,7 +46,7 @@
 
 struct mavlink_credential_s {
 	uint32_t device_id{0}; ///< validated device ID (bit24=0); 0 = disabled
-	uint8_t key[32]{};     ///< AES-256 communication key
+	uint8_t key[32] {};    ///< AES-256 communication key
 };
 
 /** Built-in development key, used as fallback when no SD key file is present. */
@@ -54,11 +54,13 @@ extern const uint8_t mavlink_credential_dev_key[32];
 
 /**
  * Load the device credential from `device_id_param` (raw MAV_DEVICE_ID value)
- * and the key file /fs/microsd/mavlink_key.bin.
+ * and the key file at PX4_STORAGEDIR/mavlink_key.bin (NuttX default /fs/microsd;
+ * POSIX is board-configurable — SITL rootfs ".", other boards e.g. "/data/px4").
  *
- *  - device ID: bit24 must be 0 (see docs/11); otherwise it is cleared to 0
- *    (credential disabled).
- *  - key: missing file -> built-in dev key; short/corrupt file -> fail closed
- *    (device ID cleared to 0). This mirrors the original MavlinkCrypto::configure().
+ *  - device ID: 0 (unset) -> disabled, no key material loaded. bit24 must be 0
+ *    (see docs/docs/60820.0/11_deviceID与incompat_flags冲突说明.md); otherwise it is cleared to 0 (credential disabled).
+ *  - key: missing file -> built-in dev key; any other load failure (short/corrupt,
+ *    open/read error) -> fail closed (device ID cleared to 0). This mirrors the
+ *    original MavlinkCrypto::configure().
  */
 void mavlink_credential_load(uint32_t device_id_param, mavlink_credential_s &out);

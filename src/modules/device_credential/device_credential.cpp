@@ -34,14 +34,14 @@
 /**
  * @file device_credential.cpp
  *
- * Companion computer credential handshake server (docs/10 §2.8).
+ * Companion computer credential handshake server (docs/docs/60820.0/10_deviceID与payload加密公共规范.md §2.8).
  *
  * The companion computer (abc_vtol) requests the drone's device ID and AES key
  * over the local DDS/uXRCE link. This module subscribes to the bridged
  * `device_credential_request` uORB topic, publishes `device_credential`, and
  * completes on `device_credential_ack`. It reads the credential via the shared
- * mavlink_credential loader so the handshake always exposes the same key the
- * MAVLink crypto layer uses.
+ * mavlink_credential loader (the same one MavlinkCrypto::configure uses) so the
+ * handshake always exposes the same key the MAVLink crypto layer uses (docs/docs/60820.0/10_deviceID与payload加密公共规范.md §2.8.7).
  */
 
 #include <px4_platform_common/px4_config.h>
@@ -96,7 +96,7 @@ private:
 	uORB::Publication<device_credential_s> _credential_pub{ORB_ID(device_credential)};
 
 	uint32_t _device_id{0};
-	uint8_t _key[32]{};
+	uint8_t _key[32] {};
 
 	uint32_t _cred_seq{0};
 	bool _pending{false};
@@ -116,6 +116,8 @@ DeviceCredential::~DeviceCredential()
 bool DeviceCredential::init()
 {
 	// Load the same credential the MAVLink crypto layer uses (single source).
+	// MavlinkCrypto::configure() calls this same loader, so both share one key/device ID
+	// without a module-to-module link (docs/docs/60820.0/10_deviceID与payload加密公共规范.md §2.8.7: "不得另建密钥存储").
 	int32_t device_id_param = 0;
 	param_get(param_find("MAV_DEVICE_ID"), &device_id_param);
 
@@ -228,7 +230,7 @@ int DeviceCredential::print_usage(const char *reason)
 ### Description
 Companion computer credential handshake server. Answers device_credential_request
 with the drone's device ID and MAVLink AES key over the DDS/uXRCE link, so the
-companion computer (abc_vtol) can decrypt/encrypt MAVLink payloads. See docs/10 §2.8.
+companion computer (abc_vtol) can decrypt/encrypt MAVLink payloads. See docs/docs/60820.0/10_deviceID与payload加密公共规范.md §2.8.
 )DESCR_STR");
 
 	PRINT_MODULE_USAGE_NAME("device_credential", "system");

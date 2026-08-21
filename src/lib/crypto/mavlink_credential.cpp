@@ -40,7 +40,10 @@
 
 #include <px4_platform_common/log.h>
 
-static constexpr const char *KEY_FILE = "/fs/microsd/mavlink_key.bin";
+// NuttX: PX4_STORAGEDIR = CONFIG_BOARD_ROOT_PATH (default /fs/microsd).
+// POSIX: PX4_STORAGEDIR = board root path (SITL default ".", other boards e.g. "/data/px4").
+// PX4_STORAGEDIR comes in transitively via px4_platform_common/log.h.
+static constexpr const char *KEY_FILE = PX4_STORAGEDIR "/mavlink_key.bin";
 
 const uint8_t mavlink_credential_dev_key[32] = {
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
@@ -51,8 +54,16 @@ const uint8_t mavlink_credential_dev_key[32] = {
 
 void mavlink_credential_load(uint32_t device_id_param, mavlink_credential_s &out)
 {
+	// Unset device ID -> credential disabled; no key material is needed, and
+	// loading it would only emit confusing "no key file / dev-key fallback" errors.
+	if (device_id_param == 0) {
+		out.device_id = 0;
+		memset(out.key, 0, sizeof(out.key));
+		return;
+	}
+
 	// The deviceID high byte is written into the MAVLink incompat_flags byte,
-	// whose bit0 is the SIGNED flag — bit24 must stay 0 (see docs/11).
+	// whose bit0 is the SIGNED flag — bit24 must stay 0 (see docs/docs/60820.0/11_deviceID与incompat_flags冲突说明.md).
 	if (device_id_param & 0x01000000u) {
 		PX4_ERR("mavlink_credential: invalid device ID 0x%08x (bit24 must be 0), disabling",
 			(unsigned)device_id_param);
@@ -70,28 +81,47 @@ void mavlink_credential_load(uint32_t device_id_param, mavlink_credential_s &out
 
 	if (fd >= 0) {
 		size_t total = 0;
+		bool read_failed = false;
 
 		while (total < sizeof(key)) {
 			const ssize_t n = read(fd, key + total, sizeof(key) - total);
 
-			if (n <= 0) {
+			if (n < 0) {
+				if (errno == EINTR) {
+					continue;
+				}
+
+				read_failed = true;
+				PX4_ERR("mavlink_credential: read error on %s: %s", KEY_FILE, strerror(errno));
 				break;
+
+			} else if (n == 0) {
+				break; // EOF: short key file
 			}
 
 			total += (size_t)n;
 		}
 
-		close(fd);
-
 		if (total == sizeof(key)) {
+			// Detect an overlong key file (e.g. a text key with a trailing newline);
+			// the first 32 bytes are used, but the mismatch should not be silent.
+			char extra = 0;
+
+			if (read(fd, &extra, 1) > 0) {
+				PX4_WARN("mavlink_credential: key file %s has trailing data, using first %u bytes",
+					 KEY_FILE, (unsigned)sizeof(key));
+			}
+
 			key_loaded = true;
 
-		} else {
-			// A present-but-truncated/corrupt key file must not silently fall
-			// back to the public dev key — fail closed.
+		} else if (!read_failed) {
+			// A present-but-truncated key file must not silently fall back to the
+			// public dev key — fail closed.
 			PX4_ERR("mavlink_credential: key file %s short/corrupt (%u/%u bytes), refusing dev-key fallback",
 				KEY_FILE, (unsigned)total, (unsigned)sizeof(key));
 		}
+
+		close(fd);
 
 	} else {
 		key_file_missing = (errno == ENOENT);
