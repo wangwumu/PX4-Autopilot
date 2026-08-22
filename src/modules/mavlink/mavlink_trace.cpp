@@ -185,7 +185,9 @@ void ensure_open()
 		return;
 	}
 
-	s_fd = open(LOG_FILE, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0600);
+	// O_TRUNC：每次 PX4 启动重建日志文件（覆盖旧内容，不增量追加），
+	// 便于每次联调从干净的序号 1 开始观察。
+	s_fd = open(LOG_FILE, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
 
 	if (s_fd >= 0) {
 		const char *hdr =
