@@ -862,8 +862,9 @@ void Mavlink::send_finish()
 		_tstatus.tx_message_count++;
 		count_txbytes(_buf_fill);
 
-		// 联调日志：仅记录实际写入网络成功的报文（sendto/write 返回完整长度）
-		if (trace_len > 0) {
+		// 联调日志：仅记录 GCS（Normal）实例实际发送给 QGC 的报文
+		//（Onboard/Gimbal 等非 GCS 实例的遥测不写日志）
+		if (trace_len > 0 && _mode == MAVLINK_MODE_NORMAL) {
 			MavlinkTrace::instance().log_tx(trace_frame, trace_len, encrypted_len, nullptr);
 		}
 

@@ -3237,22 +3237,26 @@ MavlinkReceiver::run()
 						const bool rx_ok = MavlinkCrypto::instance().decrypt_message(&msg, &consumed);
 
 						if (!rx_ok) {
-							// 联调日志：NONCE_SYNC 被接受时正常消费（S）；被拒绝（device不匹配/
-							// 过短/奇数/超预算）或非 NONCE_SYNC 失败按失败记录（F）。
+							// 联调日志（仅 GCS/Normal 实例）：NONCE_SYNC 被接受时正常消费（S）；
+							// 被拒绝（device不匹配/过短/奇数/超预算）或非 NONCE_SYNC 失败按失败记录（F）。
 							// 明文特例（QGC 登记 80005 / 待命心跳 len<28）标 M，其余为密文 C。
-							if (consumed) {
-								MavlinkTrace::instance().log_rx(msg, true, true, nullptr);
+							if (_mode == MAVLINK_MODE_NORMAL) {
+								if (consumed) {
+									MavlinkTrace::instance().log_rx(msg, true, true, nullptr);
 
-							} else {
-								const bool rx_plain = (msg.msgid == 80005) || ((msg.msgid == 0) && (rx_raw_len < 28));
-								MavlinkTrace::instance().log_rx(msg, false, rx_plain, nullptr);
+								} else {
+									const bool rx_plain = (msg.msgid == 80005) || ((msg.msgid == 0) && (rx_raw_len < 28));
+									MavlinkTrace::instance().log_rx(msg, false, rx_plain, nullptr);
+								}
 							}
 
 							continue;
 						}
 
-						// 联调日志：解密成功的加密帧（网络为密文 C）
-						MavlinkTrace::instance().log_rx(msg, true, false, nullptr);
+						// 联调日志（仅 GCS/Normal 实例）：解密成功的加密帧（网络为密文 C）
+						if (_mode == MAVLINK_MODE_NORMAL) {
+							MavlinkTrace::instance().log_rx(msg, true, false, nullptr);
+						}
 
 						// If we receive a complete MAVLink 2 packet, also switch the outgoing protocol version
 						if (!(_mavlink.get_status()->flags & MAVLINK_STATUS_FLAG_IN_MAVLINK1)
