@@ -67,9 +67,9 @@ param set-default FW_Y_RMAX 50
 param set-default VT_TYPE 4
 
 # 32 位 deviceID（MAVLink 加密层设备标识）。
-# 规范见 docs/10，bit24 必须为 0。此处为 SITL 测试用初始值 1；
-# 真机须出厂预置全局唯一 ID（每架不同），不得沿用此值。
-param set-default MAV_DEVICE_ID 1
+# 规范见 docs/docs/60822.0，bit24 必须为 0。0x00989801 = 10000385；
+# 真机须出厂预置全局唯一 ID（每架不同）。
+param set-default MAV_DEVICE_ID 10000385
 
 # Gazebo ESC/Servo mapping (4 motors)
 param set-default SIM_GZ_EC_FUNC1 101
