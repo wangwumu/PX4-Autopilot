@@ -114,14 +114,18 @@ Mavlink::Mavlink() :
 		PX4_ERR("MAV_DEVICE_ID not set: MAVLink link disabled (encryption requires a device ID)");
 	}
 
-	// save the current system- and component ID because we don't allow them to change during operation
-	int sys_id = _param_mav_sys_id.get();
+	// 修改后协议（60822.0 §1.3）：systemID/componentID 已并入 deviceID，不再独立配置。
+	// sysid = (deviceID >> 8) & 0xFF, compid = deviceID & 0xFF。从加密层 deviceID 推导，
+	// 保证与对端（QGC）用 deviceID 拆出的 sysid/compid 一致；MAV_SYS_ID/MAV_COMP_ID 不再生效。
+	// （原先用 MAV_SYS_ID 独立判断 target_system，与 deviceID 拆出的 sysid 不一致时
+	//   所有带 target_system 的命令被 PX4 丢弃——参数/命令/任务全部失效。）
+	const uint32_t crypto_devid = MavlinkCrypto::instance().device_id();
+	const int sys_id = (int)((crypto_devid >> 8) & 0xFF);
+	const int comp_id = (int)(crypto_devid & 0xFF);
 
 	if (sys_id > 0 && sys_id < 255) {
 		mavlink_system.sysid = sys_id;
 	}
-
-	int comp_id = _param_mav_comp_id.get();
 
 	if (comp_id > 0 && comp_id < 255) {
 		mavlink_system.compid = comp_id;
