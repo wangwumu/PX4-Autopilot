@@ -125,12 +125,12 @@ bool fill(uint8_t *out, uint32_t out_len)
 	battery_status_s batt{};
 	vehicle_status_s status{};
 
-	vgp_sub.update(&vgp);
-	vlp_sub.update(&vlp);
-	att_sub.update(&att);
-	gps_sub.update(&gps);
-	batt_sub.update(&batt);
-	status_sub.update(&status);
+	vgp_sub.copy(&vgp);
+	vlp_sub.copy(&vlp);
+	att_sub.copy(&att);
+	gps_sub.copy(&gps);
+	batt_sub.copy(&batt);
+	status_sub.copy(&status);
 
 	uint8_t *p = out;
 
