@@ -342,8 +342,14 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 
 	if (orig_len > MAX_PLAIN_PAYLOAD) {
 		pt_len = 4;
-		PX4_WARN("mavlink_crypto: msgid %u oversized (%u bytes), sending degraded empty frame",
-			 (unsigned)msgid, (unsigned)orig_len);
+
+		// 限频降噪：同一 msgid 超限只警告一次（大消息如 COMPONENT_METADATA 会周期性
+		// 反复超限）。退化帧照发维持 nonce 时序（规范 §2.3），但每次 PX4_WARN 会刷屏。
+		if (_warned_oversized_msgid != msgid) {
+			_warned_oversized_msgid = msgid;
+			PX4_WARN("mavlink_crypto: msgid %u oversized (%u bytes), degraded empty frame (later ones suppressed)",
+				 (unsigned)msgid, (unsigned)orig_len);
+		}
 
 	} else {
 		memcpy(plaintext + 4, payload, orig_len);
