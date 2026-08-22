@@ -147,6 +147,14 @@ px4_add_module(
 	UNITY_BUILD
 	)
 
+# 联调报文日志（记录明文/密文收发帧，含 GPS/命令等敏感数据）。
+# 默认开启供联调；生产构建应设 -DMAVLINK_TRACE_ENABLED=OFF 关闭。
+option(MAVLINK_TRACE_ENABLED "Enable mavlink_trace interop logging (联调报文日志)" ON)
+
+if(MAVLINK_TRACE_ENABLED)
+	target_compile_definitions(modules__mavlink PRIVATE MAVLINK_TRACE_ENABLED)
+endif()
+
 px4_add_unit_gtest(SRC MavlinkStatustextHandlerTest.cpp
 	INCLUDES
 		${MAVLINK_LIBRARY_DIR}

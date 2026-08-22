@@ -179,7 +179,7 @@ void ensure_open()
 		return;
 	}
 
-	s_fd = open(LOG_FILE, O_WRONLY | O_CREAT | O_APPEND, 0644);
+	s_fd = open(LOG_FILE, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0600);
 
 	if (s_fd >= 0) {
 		const char *hdr =
@@ -446,6 +446,10 @@ void MavlinkTrace::parse_content(uint32_t msgid, const uint8_t *payload, uint32_
 
 void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, const char *fail_reason)
 {
+#ifndef MAVLINK_TRACE_ENABLED
+	return;
+#else
+
 	if (!frame || frame[0] != MAVLINK_STX) {
 		return;
 	}
@@ -471,10 +475,15 @@ void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, 
 		const bool plain = (out_len <= len);
 		write_line(true, type, msgid, devid, plain, true, desc, plen, content);
 	}
+
+#endif
 }
 
 void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, const char *reason)
 {
+#ifndef MAVLINK_TRACE_ENABLED
+	return;
+#else
 	const uint32_t msgid = msg.msgid;
 	const uint8_t *payload = (const uint8_t *)msg.payload64;
 	const uint16_t plen = msg.len;
@@ -504,4 +513,5 @@ void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, con
 	}
 
 	write_line(false, type, msgid, devid, plain, ok, desc, plen, content);
+#endif
 }
