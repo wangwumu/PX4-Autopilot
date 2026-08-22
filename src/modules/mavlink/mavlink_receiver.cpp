@@ -60,6 +60,7 @@
 #include "mavlink_command_sender.h"
 #include "mavlink_main.h"
 #include "mavlink_receiver.h"
+#include "mavlink_trace.h"
 
 #include <lib/drivers/device/Device.hpp> // For DeviceId union
 #include <containers/LockGuard.hpp>
@@ -3231,9 +3232,23 @@ MavlinkReceiver::run()
 						// Decrypt the frame payload. Plaintext / wrong-key / replay / tampered
 						// frames are dropped here; the NONCE_SYNC control frame (msgid 80004)
 						// is consumed here as well, never delivered to the normal handler.
-						if (!MavlinkCrypto::instance().decrypt_message(&msg)) {
+						const uint16_t rx_raw_len = msg.len;
+						const bool rx_ok = MavlinkCrypto::instance().decrypt_message(&msg);
+
+						if (!rx_ok) {
+							// 联调日志：NONCE_SYNC 明文特例正常消费；其余按失败记录（明文/畸形/重放/认证失败）
+							if (msg.msgid == 80004) {
+								MavlinkTrace::instance().log_rx(msg, true, true, nullptr);
+
+							} else {
+								MavlinkTrace::instance().log_rx(msg, false, (rx_raw_len < 28), nullptr);
+							}
+
 							continue;
 						}
+
+						// 联调日志：解密成功的加密帧（网络为密文 C）
+						MavlinkTrace::instance().log_rx(msg, true, false, nullptr);
 
 						// If we receive a complete MAVLink 2 packet, also switch the outgoing protocol version
 						if (!(_mavlink.get_status()->flags & MAVLINK_STATUS_FLAG_IN_MAVLINK1)

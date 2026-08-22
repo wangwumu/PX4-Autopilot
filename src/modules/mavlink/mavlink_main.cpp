@@ -59,6 +59,7 @@
 #include <uORB/topics/event.h>
 #include "mavlink_receiver.h"
 #include "mavlink_main.h"
+#include "mavlink_trace.h"
 
 // Guard against MAVLink misconfiguration
 #ifndef MAVLINK_CRC_EXTRA
@@ -768,16 +769,35 @@ void Mavlink::send_finish()
 		return;
 	}
 
+	// 联调日志：encrypt_frame 会覆盖 _buf，先保存明文帧副本
+	uint8_t trace_frame[MAVLINK_MAX_PACKET_LEN];
+	uint16_t trace_len = _buf_fill;
+
+	if (trace_len > sizeof(trace_frame)) {
+		trace_len = 0; // 超长帧不记录
+
+	} else {
+		memcpy(trace_frame, _buf, trace_len);
+	}
+
 	// Encrypt the outgoing frame payload (deviceID + AES-256-GCM). On failure
 	// (crypto unconfigured or non-v2 frame) the frame is dropped — this link
 	// never transmits plaintext.
 	uint16_t encrypted_len = (uint16_t)_buf_fill;
 
 	if (!MavlinkCrypto::instance().encrypt_frame(_buf, &encrypted_len)) {
+		if (trace_len > 0) {
+			MavlinkTrace::instance().log_tx(trace_frame, trace_len, 0, "加密失败丢弃");
+		}
+
 		count_txerrbytes(_buf_fill);
 		_buf_fill = 0;
 		pthread_mutex_unlock(&_send_mutex);
 		return;
+	}
+
+	if (trace_len > 0) {
+		MavlinkTrace::instance().log_tx(trace_frame, trace_len, encrypted_len, nullptr);
 	}
 
 	_buf_fill = encrypted_len;
