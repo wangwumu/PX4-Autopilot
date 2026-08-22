@@ -3240,7 +3240,7 @@ MavlinkReceiver::run()
 							// 联调日志（仅 GCS/Normal 实例）：NONCE_SYNC 被接受时正常消费（S）；
 							// 被拒绝（device不匹配/过短/奇数/超预算）或非 NONCE_SYNC 失败按失败记录（F）。
 							// 明文特例（QGC 登记 80005 / 待命心跳 len<28）标 M，其余为密文 C。
-							if (_mode == MAVLINK_MODE_NORMAL) {
+							if (_mavlink.get_mode() == Mavlink::MAVLINK_MODE_NORMAL) {
 								if (consumed) {
 									MavlinkTrace::instance().log_rx(msg, true, true, nullptr);
 
@@ -3254,7 +3254,7 @@ MavlinkReceiver::run()
 						}
 
 						// 联调日志（仅 GCS/Normal 实例）：解密成功的加密帧（网络为密文 C）
-						if (_mode == MAVLINK_MODE_NORMAL) {
+						if (_mavlink.get_mode() == Mavlink::MAVLINK_MODE_NORMAL) {
 							MavlinkTrace::instance().log_rx(msg, true, false, nullptr);
 						}
 
