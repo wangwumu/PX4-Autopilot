@@ -138,7 +138,8 @@ void MavlinkCrypto::set_heartbeat_extension(const uint8_t *ext, uint32_t len)
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
 	_heartbeat_ext_len = 0;
 
-	if (ext && len > 0 && len <= sizeof(_heartbeat_ext)) {
+	// EXT 固定 37B（协议 60822.0 §4）：只接受精确长度，防止短/超长 EXT 上线
+	if (ext && len == MavlinkHeartbeatExt::kExtLen) {
 		memcpy(_heartbeat_ext, ext, len);
 		_heartbeat_ext_len = len;
 	}
@@ -350,10 +351,16 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 
 		// 加密心跳（已建链）：明文追加基础状态 EXT（协议 60822.0）。
 		// 明文待命心跳（standby）走 emit_plaintext_heartbeat，不进本分支。
-		if (msgid == MSGID_HEARTBEAT && _heartbeat_ext_len > 0) {
+		if (msgid == MSGID_HEARTBEAT) {
 			pthread_mutex_lock(&g_mavlink_crypto_lock);
-			memcpy(plaintext + pt_len, _heartbeat_ext, _heartbeat_ext_len);
-			pt_len += _heartbeat_ext_len;
+			const uint32_t ext_len = _heartbeat_ext_len;
+
+			// 锁内读一次 + 边界检查：长度门与拷贝一致，防止并发 set 造成撕裂/溢出
+			if (ext_len > 0 && pt_len + ext_len <= sizeof(plaintext)) {
+				memcpy(plaintext + pt_len, _heartbeat_ext, ext_len);
+				pt_len += ext_len;
+			}
+
 			pthread_mutex_unlock(&g_mavlink_crypto_lock);
 		}
 	}

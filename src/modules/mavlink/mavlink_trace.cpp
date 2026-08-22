@@ -494,11 +494,12 @@ void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, 
 		const bool plain = (out_len == len);
 		const char *use_desc = desc;
 
-		// 建链后 PX4 发加密心跳（10Hz），此时不应叫"待命心跳"
+		// 建链后 PX4 发加密心跳（5Hz，见 px4-rc.mavlink），此时不应叫"待命心跳"
 		if (msgid == MAVLINK_MSG_ID_HEARTBEAT && !plain) {
 			use_desc = "心跳";
 
-			// 加密心跳扩展（60822.0）：发送日志也显示 EXT 基础状态（实时填充，与帧内一致）
+			// 加密心跳扩展（60822.0）：发送日志也显示 EXT 基础状态
+			//（此处为日志时重新 fill，与帧内近似——供日志参考）
 			uint8_t ext[MavlinkHeartbeatExt::kExtLen];
 			char extbuf[256];
 

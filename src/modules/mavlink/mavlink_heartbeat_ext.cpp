@@ -33,7 +33,11 @@
 
 #include "mavlink_heartbeat_ext.h"
 
+#include <math.h>
+#include <pthread.h>
+
 #include <matrix/math.hpp>
+#include <px4_platform_common/defines.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -95,9 +99,15 @@ static float get_f32(const uint8_t *p)
 	return f;
 }
 
+// 保护静态 uORB 订阅的跨 MAVLink 实例并发访问（多实例各线程调用 fill）
+pthread_mutex_t s_fill_lock = PTHREAD_MUTEX_INITIALIZER;
+
 bool fill(uint8_t *out, uint32_t out_len)
 {
+	pthread_mutex_lock(&s_fill_lock);
+
 	if (out_len < kExtLen) {
+		pthread_mutex_unlock(&s_fill_lock);
 		return false;
 	}
 
@@ -124,15 +134,21 @@ bool fill(uint8_t *out, uint32_t out_len)
 
 	uint8_t *p = out;
 
-	// 位置（float64 度 → degE7，float32 米 → mm）
-	put_s32(p + 0, (int32_t)(vgp.lat * 1e7));
-	put_s32(p + 4, (int32_t)(vgp.lon * 1e7));
-	put_s32(p + 8, (int32_t)(vgp.alt * 1000.f));
+	// 位置（float64 度 → degE7，float32 米 → mm）；无效/NaN → INT32_MIN 哨兵（协议 §4）
+	const int32_t lat = (PX4_ISFINITE(vgp.lat)) ? (int32_t)(vgp.lat * 1e7) : INT32_MIN;
+	const int32_t lon = (PX4_ISFINITE(vgp.lon)) ? (int32_t)(vgp.lon * 1e7) : INT32_MIN;
+	const int32_t alt = (PX4_ISFINITE(vgp.alt)) ? (int32_t)(vgp.alt * 1000.f) : INT32_MIN;
+	put_s32(p + 0, lat);
+	put_s32(p + 4, lon);
+	put_s32(p + 8, alt);
 
-	// 速度（float32 m/s → cm/s）
-	put_s16(p + 12, (int16_t)(vlp.vx * 100.f));
-	put_s16(p + 14, (int16_t)(vlp.vy * 100.f));
-	put_s16(p + 16, (int16_t)(vlp.vz * 100.f));
+	// 速度（float32 m/s → cm/s）；无效/NaN → INT16_MIN 哨兵
+	const int16_t vx = (PX4_ISFINITE(vlp.vx)) ? (int16_t)(vlp.vx * 100.f) : INT16_MIN;
+	const int16_t vy = (PX4_ISFINITE(vlp.vy)) ? (int16_t)(vlp.vy * 100.f) : INT16_MIN;
+	const int16_t vz = (PX4_ISFINITE(vlp.vz)) ? (int16_t)(vlp.vz * 100.f) : INT16_MIN;
+	put_s16(p + 12, vx);
+	put_s16(p + 14, vy);
+	put_s16(p + 16, vz);
 
 	// 姿态（四元数 → 欧拉角）
 	const matrix::Quatf q(att.q[0], att.q[1], att.q[2], att.q[3]);
@@ -145,10 +161,14 @@ bool fill(uint8_t *out, uint32_t out_len)
 	put_u8(p + 30, gps.fix_type);
 	put_u8(p + 31, gps.satellites_used);
 	put_u16(p + 32, (uint16_t)(batt.voltage_v * 1000.f));
-	put_u8(p + 34, (uint8_t)((int8_t)(batt.remaining * 100.f)));
+	// 未知（无电池/未估算）：@invalid -1 → 写 -1（协议 §4 未知哨兵）
+	const int8_t rem = (batt.connected && PX4_ISFINITE(batt.remaining) && batt.remaining >= 0.f)
+			   ? (int8_t)roundf(batt.remaining * 100.f) : -1;
+	put_u8(p + 34, (uint8_t)rem);
 	put_u8(p + 35, status.nav_state);
 	put_u8(p + 36, status.arming_state);
 
+	pthread_mutex_unlock(&s_fill_lock);
 	return true;
 }
 
