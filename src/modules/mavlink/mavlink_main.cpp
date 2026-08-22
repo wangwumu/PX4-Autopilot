@@ -809,10 +809,6 @@ void Mavlink::send_finish()
 		return;
 	}
 
-	if (trace_len > 0) {
-		MavlinkTrace::instance().log_tx(trace_frame, trace_len, encrypted_len, nullptr);
-	}
-
 	_buf_fill = encrypted_len;
 
 	int ret = -1;
@@ -865,6 +861,12 @@ void Mavlink::send_finish()
 	if (ret == (int)_buf_fill) {
 		_tstatus.tx_message_count++;
 		count_txbytes(_buf_fill);
+
+		// 联调日志：仅记录实际写入网络成功的报文（sendto/write 返回完整长度）
+		if (trace_len > 0) {
+			MavlinkTrace::instance().log_tx(trace_frame, trace_len, encrypted_len, nullptr);
+		}
+
 		_last_write_success_time = _last_write_try_time;
 
 	} else {
