@@ -801,10 +801,8 @@ void Mavlink::send_finish()
 	uint16_t encrypted_len = (uint16_t)_buf_fill;
 
 	if (!MavlinkCrypto::instance().encrypt_frame(_buf, &encrypted_len)) {
-		if (trace_len > 0) {
-			MavlinkTrace::instance().log_tx(trace_frame, trace_len, 0, "加密失败丢弃");
-		}
-
+		// 加密失败被丢弃的帧不写入联调日志（避免 standby 遥测丢弃噪声刷屏）；
+		// 日志只记录实际发送的报文（明文待命心跳 / 加密帧）。
 		count_txerrbytes(_buf_fill);
 		_buf_fill = 0;
 		pthread_mutex_unlock(&_send_mutex);
