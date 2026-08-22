@@ -3236,12 +3236,14 @@ MavlinkReceiver::run()
 						const bool rx_ok = MavlinkCrypto::instance().decrypt_message(&msg);
 
 						if (!rx_ok) {
-							// 联调日志：NONCE_SYNC 明文特例正常消费；其余按失败记录（明文/畸形/重放/认证失败）
+							// 联调日志：NONCE_SYNC 明文特例正常消费；其余按失败记录。
+							// 明文特例（QGC 登记 80005 / 待命心跳 len<28）标 M，其余为密文 C。
 							if (msg.msgid == 80004) {
 								MavlinkTrace::instance().log_rx(msg, true, true, nullptr);
 
 							} else {
-								MavlinkTrace::instance().log_rx(msg, false, (rx_raw_len < 28), nullptr);
+								const bool rx_plain = (msg.msgid == 80005) || ((msg.msgid == 0) && (rx_raw_len < 28));
+								MavlinkTrace::instance().log_rx(msg, false, rx_plain, nullptr);
 							}
 
 							continue;
