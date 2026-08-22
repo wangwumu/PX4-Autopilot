@@ -139,6 +139,10 @@ private:
 
 			if (health_report.can_arm_mode_flags & (1u << status.nav_state)) {
 				msg.onboard_control_sensors_health |= MAV_SYS_STATUS_PREARM_CHECK;
+				// 预检启用也应在 enabled 位（标准 MAVLink 语义：enabled=需要/运行的检查项）。
+				// 仅设 health 时，QGC 的 readyToFlyAvailable（检查 enabled & PREARM_CHECK）
+				// 不生效，会退到 allSensorsHealthy 分支判定就绪。
+				msg.onboard_control_sensors_enabled |= MAV_SYS_STATUS_PREARM_CHECK;
 			}
 
 			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_BATTERY, health_component_t::battery, msg);
