@@ -92,8 +92,11 @@ public:
 	 * message is rebuilt into the plain standard message (len reduced, payload replaced).
 	 * Returns false if the frame must be dropped (plaintext / wrong device / replay /
 	 * tampered / degraded empty frame / consumed NONCE_SYNC control frame).
+	 * For NONCE_SYNC (msgid 80004), `consumed` (if non-null) is set true only when the
+	 * sync was accepted (device matched, len>=8, even counter within budget); rejections
+	 * leave it false so callers can distinguish consumed-from-failed.
 	 */
-	bool decrypt_message(mavlink_message_t *msg);
+	bool decrypt_message(mavlink_message_t *msg, bool *consumed = nullptr);
 
 	/** Frame growth introduced by encryption: counter(8) + deviceID(4) + tag(16). */
 	static constexpr uint32_t OVERHEAD = 28;
@@ -110,8 +113,8 @@ private:
 	 */
 	bool next_tx_counter(uint64_t &counter);
 
-	/** Raise the downlink base from a NONCE_SYNC counter (max, post-link only). */
-	void on_nonce_sync(uint64_t counter);
+	/** Raise the downlink base from a NONCE_SYNC counter (max, post-link only). Returns false if rejected (odd / >= budget). */
+	bool on_nonce_sync(uint64_t counter);
 
 	/** Emit the standby plaintext HEARTBEAT beacon (deviceID in header, no crypto). */
 	bool emit_plaintext_heartbeat(uint8_t *frame, uint32_t msgid);

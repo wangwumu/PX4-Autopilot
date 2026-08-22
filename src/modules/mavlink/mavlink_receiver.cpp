@@ -3233,12 +3233,14 @@ MavlinkReceiver::run()
 						// frames are dropped here; the NONCE_SYNC control frame (msgid 80004)
 						// is consumed here as well, never delivered to the normal handler.
 						const uint16_t rx_raw_len = msg.len;
-						const bool rx_ok = MavlinkCrypto::instance().decrypt_message(&msg);
+						bool consumed = false;
+						const bool rx_ok = MavlinkCrypto::instance().decrypt_message(&msg, &consumed);
 
 						if (!rx_ok) {
-							// 联调日志：NONCE_SYNC 明文特例正常消费；其余按失败记录。
+							// 联调日志：NONCE_SYNC 被接受时正常消费（S）；被拒绝（device不匹配/
+							// 过短/奇数/超预算）或非 NONCE_SYNC 失败按失败记录（F）。
 							// 明文特例（QGC 登记 80005 / 待命心跳 len<28）标 M，其余为密文 C。
-							if (msg.msgid == 80004) {
+							if (consumed) {
 								MavlinkTrace::instance().log_rx(msg, true, true, nullptr);
 
 							} else {

@@ -179,7 +179,7 @@ bool MavlinkCrypto::next_tx_counter(uint64_t &counter)
 	return true;
 }
 
-void MavlinkCrypto::on_nonce_sync(uint64_t counter)
+bool MavlinkCrypto::on_nonce_sync(uint64_t counter)
 {
 	// Downlink counters are always even (PX4 +2, abc_vtol +100). Reject odd
 	// counters: a forged odd NONCE_SYNC would drive the downlink base odd, so the
@@ -190,7 +190,7 @@ void MavlinkCrypto::on_nonce_sync(uint64_t counter)
 			PX4_ERR("mavlink_crypto: rejecting odd NONCE_SYNC counter");
 		}
 
-		return;
+		return false;
 	}
 
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
@@ -208,13 +208,15 @@ void MavlinkCrypto::on_nonce_sync(uint64_t counter)
 			}
 
 			pthread_mutex_unlock(&g_mavlink_crypto_lock);
-			return;
+			return false;
 		}
 
 		_tx_last_nonce = counter;
 	}
 
 	pthread_mutex_unlock(&g_mavlink_crypto_lock);
+
+	return true;
 }
 
 bool MavlinkCrypto::aes_gcm(bool encrypt, const uint8_t nonce[12], const uint8_t *aad, uint32_t aad_len,
@@ -393,7 +395,7 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 	return true;
 }
 
-bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg)
+bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg, bool *consumed)
 {
 	if (_device_id == 0) {
 		log_drop(_warned_unconfigured, "device ID unset");
@@ -420,7 +422,15 @@ bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg)
 		// MAVLink serializes uint64 little-endian; payload64[0] yields the native
 		// value on the (little-endian) targets PX4 runs on.
 		const uint64_t counter = ((const uint64_t *)_MAV_PAYLOAD(msg))[0];
-		on_nonce_sync(counter);
+
+		// 仅当 counter 被接受（偶数且在预算内）时标记 consumed；被拒绝的
+		// NONCE_SYNC（device 不匹配/过短/奇数/超预算）保持 false，供调用方区分。
+		if (on_nonce_sync(counter)) {
+			if (consumed) {
+				*consumed = true;
+			}
+		}
+
 		return false; // consumed
 	}
 

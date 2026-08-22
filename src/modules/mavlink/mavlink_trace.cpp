@@ -40,12 +40,15 @@
 
 #include <drivers/drv_hrt.h>
 
+#include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
+#ifdef MAVLINK_TRACE_ENABLED
 namespace
 {
 // 日志文件：PX4_STORAGEDIR/mavlink_trace.log（SITL = build/.../rootfs/）
@@ -165,6 +168,9 @@ void payload_to_msg(uint32_t msgid, const uint8_t *payload, uint32_t len, mavlin
 
 int s_fd = -1;
 uint32_t s_seq = 0;
+bool s_open_warned = false;
+// 全局锁：多 MAVLink 实例的 TX/RX 线程并发调用 write_line，串行化整行写入
+pthread_mutex_t s_trace_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // 忽略写日志的返回值（文件满/磁盘错误不影响飞行）
 void trace_write(int fd, const void *buf, size_t len)
@@ -185,77 +191,81 @@ void ensure_open()
 		const char *hdr =
 			"    序号 时间 发送端 类型 命令 deviceID 明/密 解析 报文说明 长度 报文内容\n";
 		trace_write(s_fd, hdr, strlen(hdr));
+
+	} else if (!s_open_warned) {
+		// 首次打开失败告警一次（后续仍会重试，存储恢复后自愈）
+		s_open_warned = true;
+		PX4_ERR("mavlink_trace: cannot open %s: %s", LOG_FILE, strerror(errno));
 	}
 }
 
-// 按显示宽度右对齐写一个字段（汉字按 2 列），后接一个空格
-void write_padded(int fd, const char *s, int width)
+// 在内存缓冲区中按显示宽度右对齐追加一个字段（汉字按 2 列），后接一个空格
+void buf_pad(char *buf, size_t bufsz, size_t &off, const char *s, int width)
 {
 	const int w = utf8_width(s);
 
 	if (w < width) {
-		char spaces[64];
-		int pad = width - w;
+		int n = snprintf(buf + off, bufsz - off, "%*s", width - w, "");
 
-		if (pad > 63) {
-			pad = 63;
+		if (n > 0 && (size_t)n < bufsz - off) {
+			off += (size_t)n;
 		}
-
-		memset(spaces, ' ', pad);
-		trace_write(fd, spaces, pad);
 	}
 
-	trace_write(fd, s, strlen(s));
-	trace_write(fd, " ", 1);
+	int n = snprintf(buf + off, bufsz - off, "%s ", s);
+
+	if (n > 0 && (size_t)n < bufsz - off) {
+		off += (size_t)n;
+	}
 }
 
+// 组装并写入一行。加全局锁保证多实例并发时不交错、序号单调。
 void write_line(bool tx, const char *type, uint32_t msgid, uint32_t devid,
 		bool plain, bool ok, const char *desc, uint32_t plen, const char *content)
 {
+	pthread_mutex_lock(&s_trace_lock);
 	ensure_open();
 
-	if (s_fd < 0) {
-		return;
+	if (s_fd >= 0) {
+		s_seq++;
+
+		const uint64_t t_us = hrt_absolute_time();
+		const uint32_t sec = (uint32_t)(t_us / 1000000);
+
+		char line[1024];
+		size_t off = 0;
+		char tmp[24];
+
+		snprintf(tmp, sizeof(tmp), "%5u", s_seq);
+		buf_pad(line, sizeof(line), off, tmp, 5);
+
+		snprintf(tmp, sizeof(tmp), "%02u:%02u:%02u", sec / 3600, (sec / 60) % 60, sec % 60);
+		buf_pad(line, sizeof(line), off, tmp, 8);
+
+		buf_pad(line, sizeof(line), off, tx ? "PX4" : "QGC", 3);
+		buf_pad(line, sizeof(line), off, type, 3);
+
+		snprintf(tmp, sizeof(tmp), "%5u", msgid);
+		buf_pad(line, sizeof(line), off, tmp, 5);
+
+		snprintf(tmp, sizeof(tmp), "%06u", devid);
+		buf_pad(line, sizeof(line), off, tmp, 6);
+
+		snprintf(tmp, sizeof(tmp), "%c %c", plain ? 'M' : 'C', ok ? 'S' : 'F');
+		buf_pad(line, sizeof(line), off, tmp, 3);
+
+		// 报文说明：20 汉字（40 显示列）右对齐
+		buf_pad(line, sizeof(line), off, desc, 40);
+
+		snprintf(tmp, sizeof(tmp), "%3u", plen);
+		buf_pad(line, sizeof(line), off, tmp, 3);
+
+		snprintf(line + off, sizeof(line) - off, "%s\n", content);
+
+		trace_write(s_fd, line, strlen(line));
 	}
 
-	s_seq++;
-
-	const uint64_t t_us = hrt_absolute_time();
-	const uint32_t sec = (uint32_t)(t_us / 1000000);
-
-	char seqbuf[8];
-	snprintf(seqbuf, sizeof(seqbuf), "%5u", s_seq);
-	write_padded(s_fd, seqbuf, 5);
-
-	char timebuf[16];
-	snprintf(timebuf, sizeof(timebuf), "%02u:%02u:%02u", sec / 3600, (sec / 60) % 60, sec % 60);
-	write_padded(s_fd, timebuf, 8);
-
-	write_padded(s_fd, tx ? "PX4" : "QGC", 3);
-	write_padded(s_fd, type, 3);
-
-	char cmdbuf[8];
-	snprintf(cmdbuf, sizeof(cmdbuf), "%5u", msgid);
-	write_padded(s_fd, cmdbuf, 5);
-
-	char devbuf[12];
-	snprintf(devbuf, sizeof(devbuf), "%06u", devid);
-	write_padded(s_fd, devbuf, 6);
-
-	trace_write(s_fd, plain ? "M" : "C", 1);
-	trace_write(s_fd, " ", 1);
-	trace_write(s_fd, ok ? "S" : "F", 1);
-	trace_write(s_fd, " ", 1);
-
-	// 报文说明：20 汉字（40 显示列）右对齐
-	write_padded(s_fd, desc, 40);
-
-	char lenbuf[8];
-	snprintf(lenbuf, sizeof(lenbuf), "%3u", plen);
-	write_padded(s_fd, lenbuf, 3);
-
-	trace_write(s_fd, content, strlen(content));
-	trace_write(s_fd, "\n", 1);
+	pthread_mutex_unlock(&s_trace_lock);
 }
 } // namespace
 
@@ -353,8 +363,9 @@ void MavlinkTrace::parse_content(uint32_t msgid, const uint8_t *payload, uint32_
 			char text[51] = {};
 			mavlink_msg_statustext_get_text(&msg, text);
 
-			// severity >= WARNING 标为告警，否则作状态数据
-			*type = (severity >= MAV_SEVERITY_WARNING) ? "Alm" : "Dat";
+			// MAVLink MAV_SEVERITY 数字越小越严重（0=EMERGENCY…4=WARNING…7=DEBUG）。
+			// 达到 WARNING 及更严重（severity <= WARNING）才标为告警，否则作状态数据。
+			*type = (severity <= MAV_SEVERITY_WARNING) ? "Alm" : "Dat";
 			APPEND("severity=%u text=%s", severity, text);
 			break;
 		}
@@ -446,20 +457,16 @@ void MavlinkTrace::parse_content(uint32_t msgid, const uint8_t *payload, uint32_
 
 void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, const char *fail_reason)
 {
-#ifndef MAVLINK_TRACE_ENABLED
-	return;
-#else
-
 	if (!frame || frame[0] != MAVLINK_STX) {
 		return;
 	}
 
-	// 从明文原始帧提取字段
+	// 从明文原始帧提取字段（注意：deviceID 由 encrypt_frame 写入帧头，
+	// 故 TX 侧 deviceID 直接用本机 MavlinkCrypto::device_id()）。
 	const uint8_t *payload = &frame[10];
 	const uint16_t plen = frame[1];
 	const uint32_t msgid = (uint32_t)frame[7] | ((uint32_t)frame[8] << 8) | ((uint32_t)frame[9] << 16);
-	const uint32_t devid = ((uint32_t)frame[2] << 24) | ((uint32_t)frame[3] << 16)
-			       | ((uint32_t)frame[5] << 8) | (uint32_t)frame[6];
+	const uint32_t devid = MavlinkCrypto::instance().device_id();
 
 	char content[512];
 	const char *desc;
@@ -467,23 +474,26 @@ void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, 
 	parse_content(msgid, payload, plen, content, sizeof(content), &desc, &type);
 
 	if (fail_reason) {
-		// 加密失败被丢弃：明文帧，解析失败
+		// 加密失败被丢弃：明文帧，日志标 F（content 已被 fail_reason 覆盖说明）
 		write_line(true, type, msgid, devid, true, false, desc, plen, fail_reason);
 
 	} else {
-		// out_len > len → 密文（C）；out_len == len → 明文待命心跳（M）
-		const bool plain = (out_len <= len);
-		write_line(true, type, msgid, devid, plain, true, desc, plen, content);
-	}
+		// 仅明文待命心跳（encrypt_frame 不改长度，out_len==len）标 M；
+		// 加密帧含超限退化帧（payload 退化为仅 deviceID，out_len<len）均为 C。
+		const bool plain = (out_len == len);
+		const char *use_desc = desc;
 
-#endif
+		// 建链后 PX4 发加密心跳（10Hz），此时不应叫"待命心跳"
+		if (msgid == MAVLINK_MSG_ID_HEARTBEAT && !plain) {
+			use_desc = "心跳";
+		}
+
+		write_line(true, type, msgid, devid, plain, true, use_desc, plen, content);
+	}
 }
 
 void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, const char *reason)
 {
-#ifndef MAVLINK_TRACE_ENABLED
-	return;
-#else
 	const uint32_t msgid = msg.msgid;
 	const uint8_t *payload = (const uint8_t *)msg.payload64;
 	const uint16_t plen = msg.len;
@@ -508,10 +518,50 @@ void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, con
 	const char *type;
 	parse_content(msgid, payload, plen, content, sizeof(content), &desc, &type);
 
+	// 建链后的加密心跳不叫"待命心跳"（仅明文待命心跳标 M 时保留原名）
+	if (msgid == MAVLINK_MSG_ID_HEARTBEAT && !plain) {
+		desc = "心跳";
+	}
+
 	if (!ok) {
 		snprintf(content, sizeof(content), "解析失败: %s", reason);
 	}
 
 	write_line(false, type, msgid, devid, plain, ok, desc, plen, content);
-#endif
 }
+#else
+// MAVLINK_TRACE_ENABLED 未定义：空实现，零运行时开销
+MavlinkTrace &MavlinkTrace::instance()
+{
+	static MavlinkTrace inst;
+	return inst;
+}
+
+void MavlinkTrace::parse_content(uint32_t msgid, const uint8_t *payload, uint32_t len,
+				 char *out, size_t outsz, const char **desc, const char **type)
+{
+	(void)msgid;
+	(void)payload;
+	(void)len;
+	(void)out;
+	(void)outsz;
+	(void)desc;
+	(void)type;
+}
+
+void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, const char *fail_reason)
+{
+	(void)frame;
+	(void)len;
+	(void)out_len;
+	(void)fail_reason;
+}
+
+void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, const char *reason)
+{
+	(void)msg;
+	(void)ok;
+	(void)plain;
+	(void)reason;
+}
+#endif
