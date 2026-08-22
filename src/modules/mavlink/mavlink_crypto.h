@@ -48,6 +48,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "mavlink_heartbeat_ext.h"
+
 typedef struct __mavlink_message mavlink_message_t;
 
 class MavlinkCrypto
@@ -76,6 +78,12 @@ public:
 	 */
 	uint32_t device_id() const;
 	void key(uint8_t out[32]) const;
+
+	/**
+	 * 缓存加密心跳的基础状态扩展（EXT，60822.0）。由 mavlink 发送路径在发 HEARTBEAT
+	 * 前调用（实时聚合 uORB）；encrypt_frame 加密心跳时拼接到明文后。线程安全。
+	 */
+	void set_heartbeat_extension(const uint8_t *ext, uint32_t len);
 
 	/**
 	 * Prepare a fully serialized MAVLink v2 frame for transmission.
@@ -130,6 +138,8 @@ private:
 
 	uint32_t _device_id{0};
 	uint8_t _key[32] {};
+	uint8_t _heartbeat_ext[MavlinkHeartbeatExt::kExtLen] {};
+	uint32_t _heartbeat_ext_len{0}; ///< 加密心跳 EXT 长度（0 = 未设置）
 	uint64_t _rx_last_nonce{0};     ///< anti-replay floor (received frames, global)
 	bool _rx_last_nonce_set{false};
 	uint64_t _tx_last_nonce{0};     ///< downlink even send base; unset = standby

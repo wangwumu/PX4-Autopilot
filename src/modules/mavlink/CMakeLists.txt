@@ -106,6 +106,7 @@ px4_add_module(
 		mavlink.c
 		mavlink_command_sender.cpp
 		mavlink_crypto.cpp
+		mavlink_heartbeat_ext.cpp
 		mavlink_events.cpp
 		mavlink_ftp.cpp
 		mavlink_log_handler.cpp

@@ -59,6 +59,7 @@
 #include <uORB/topics/event.h>
 #include "mavlink_receiver.h"
 #include "mavlink_main.h"
+#include "mavlink_heartbeat_ext.h"
 #include "mavlink_trace.h"
 
 // Guard against MAVLink misconfiguration
@@ -778,6 +779,20 @@ void Mavlink::send_finish()
 
 	} else {
 		memcpy(trace_frame, _buf, trace_len);
+	}
+
+	// 加密心跳扩展（60822.0）：HEARTBEAT 发送前实时聚合 uORB 基础状态到 EXT，
+	// encrypt_frame 加密心跳时会拼接到明文后。明文待命心跳（standby）不拼 EXT。
+	if (_buf_fill >= 10 && _buf[0] == MAVLINK_STX) {
+		const uint32_t send_msgid = (uint32_t)_buf[7] | ((uint32_t)_buf[8] << 8) | ((uint32_t)_buf[9] << 16);
+
+		if (send_msgid == MAVLINK_MSG_ID_HEARTBEAT) {
+			uint8_t ext[MavlinkHeartbeatExt::kExtLen];
+
+			if (MavlinkHeartbeatExt::fill(ext, sizeof(ext))) {
+				MavlinkCrypto::instance().set_heartbeat_extension(ext, sizeof(ext));
+			}
+		}
 	}
 
 	// Encrypt the outgoing frame payload (deviceID + AES-256-GCM). On failure

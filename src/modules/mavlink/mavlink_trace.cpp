@@ -35,6 +35,7 @@
 
 #include "mavlink_bridge_header.h"
 #include "mavlink_crypto.h"
+#include "mavlink_heartbeat_ext.h"
 
 #include <px4_platform_common/log.h>
 
@@ -305,6 +306,14 @@ void MavlinkTrace::parse_content(uint32_t msgid, const uint8_t *payload, uint32_
 			       mavlink_msg_heartbeat_get_type(&msg), mavlink_msg_heartbeat_get_autopilot(&msg),
 			       mavlink_msg_heartbeat_get_base_mode(&msg), mavlink_msg_heartbeat_get_custom_mode(&msg),
 			       mavlink_msg_heartbeat_get_system_status(&msg));
+
+			// 加密心跳扩展（60822.0）：解密后 payload > 9（标准 HEARTBEAT）时解析 EXT 基础状态
+			if (len > 9) {
+				char extbuf[256];
+				MavlinkHeartbeatExt::parse(payload + 9, len - 9, extbuf, sizeof(extbuf));
+				APPEND(" | %s", extbuf);
+			}
+
 			break;
 		}
 
@@ -488,6 +497,16 @@ void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, 
 		// 建链后 PX4 发加密心跳（10Hz），此时不应叫"待命心跳"
 		if (msgid == MAVLINK_MSG_ID_HEARTBEAT && !plain) {
 			use_desc = "心跳";
+
+			// 加密心跳扩展（60822.0）：发送日志也显示 EXT 基础状态（实时填充，与帧内一致）
+			uint8_t ext[MavlinkHeartbeatExt::kExtLen];
+			char extbuf[256];
+
+			if (MavlinkHeartbeatExt::fill(ext, sizeof(ext))) {
+				MavlinkHeartbeatExt::parse(ext, sizeof(ext), extbuf, sizeof(extbuf));
+				const size_t clen = strlen(content);
+				snprintf(content + clen, sizeof(content) - clen, " | %s", extbuf);
+			}
 		}
 
 		write_line(true, type, msgid, devid, plain, true, use_desc, plen, content);

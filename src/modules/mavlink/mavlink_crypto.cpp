@@ -133,6 +133,19 @@ void MavlinkCrypto::key(uint8_t out[32]) const
 	pthread_mutex_unlock(&g_mavlink_crypto_lock);
 }
 
+void MavlinkCrypto::set_heartbeat_extension(const uint8_t *ext, uint32_t len)
+{
+	pthread_mutex_lock(&g_mavlink_crypto_lock);
+	_heartbeat_ext_len = 0;
+
+	if (ext && len > 0 && len <= sizeof(_heartbeat_ext)) {
+		memcpy(_heartbeat_ext, ext, len);
+		_heartbeat_ext_len = len;
+	}
+
+	pthread_mutex_unlock(&g_mavlink_crypto_lock);
+}
+
 void MavlinkCrypto::make_nonce(uint64_t counter, uint8_t nonce[12])
 {
 	u64_to_be(counter, nonce);
@@ -334,6 +347,15 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 	} else {
 		memcpy(plaintext + 4, payload, orig_len);
 		pt_len = 4 + orig_len;
+
+		// 加密心跳（已建链）：明文追加基础状态 EXT（协议 60822.0）。
+		// 明文待命心跳（standby）走 emit_plaintext_heartbeat，不进本分支。
+		if (msgid == MSGID_HEARTBEAT && _heartbeat_ext_len > 0) {
+			pthread_mutex_lock(&g_mavlink_crypto_lock);
+			memcpy(plaintext + pt_len, _heartbeat_ext, _heartbeat_ext_len);
+			pt_len += _heartbeat_ext_len;
+			pthread_mutex_unlock(&g_mavlink_crypto_lock);
+		}
 	}
 
 	memcpy(plaintext, devid_be, 4);
