@@ -49,8 +49,8 @@
 
 namespace MavlinkHeartbeatExt
 {
-/** EXT 固定长度：41 字节（见协议 §4 字段表；姿态用四元数 q[4]）。 */
-constexpr uint32_t kExtLen = 41;
+/** EXT 固定长度：37 字节（见协议 §4 字段表）。 */
+constexpr uint32_t kExtLen = 37;
 
 /**
  * 从 uORB 聚合基础状态并序列化为 EXT（小端，kExtLen 字节）。

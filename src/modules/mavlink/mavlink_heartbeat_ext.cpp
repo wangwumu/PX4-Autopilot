@@ -150,23 +150,23 @@ bool fill(uint8_t *out, uint32_t out_len)
 	put_s16(p + 14, vy);
 	put_s16(p + 16, vz);
 
-	// 姿态：四元数 q(w,x,y,z)——避免欧拉角在 tailsitter 垂直姿态的 gimbal lock，
-	// 由接收方用四元数计算机头指向/姿态显示（协议 60822.0 §4）
-	put_f32(p + 18, att.q[0]);  // w
-	put_f32(p + 22, att.q[1]);  // x
-	put_f32(p + 26, att.q[2]);  // y
-	put_f32(p + 30, att.q[3]);  // z
+	// 姿态（四元数 → 欧拉角）
+	const matrix::Quatf q(att.q[0], att.q[1], att.q[2], att.q[3]);
+	const matrix::Eulerf euler(q);
+	put_f32(p + 18, euler.phi());
+	put_f32(p + 22, euler.theta());
+	put_f32(p + 26, euler.psi());
 
 	// GPS / 电池 / 模式
-	put_u8(p + 34, gps.fix_type);
-	put_u8(p + 35, gps.satellites_used);
-	put_u16(p + 36, (uint16_t)(batt.voltage_v * 1000.f));
+	put_u8(p + 30, gps.fix_type);
+	put_u8(p + 31, gps.satellites_used);
+	put_u16(p + 32, (uint16_t)(batt.voltage_v * 1000.f));
 	// 未知（无电池/未估算）：@invalid -1 → 写 -1（协议 §4 未知哨兵）
 	const int8_t rem = (batt.connected && PX4_ISFINITE(batt.remaining) && batt.remaining >= 0.f)
 			   ? (int8_t)roundf(batt.remaining * 100.f) : -1;
-	put_u8(p + 38, (uint8_t)rem);
-	put_u8(p + 39, status.nav_state);
-	put_u8(p + 40, status.arming_state);
+	put_u8(p + 34, (uint8_t)rem);
+	put_u8(p + 35, status.nav_state);
+	put_u8(p + 36, status.arming_state);
 
 	pthread_mutex_unlock(&s_fill_lock);
 	return true;
@@ -185,20 +185,19 @@ void parse(const uint8_t *ext, uint32_t len, char *out, size_t out_len)
 	const int16_t vx = get_s16(ext + 12);
 	const int16_t vy = get_s16(ext + 14);
 	const int16_t vz = get_s16(ext + 16);
-	const float qw = get_f32(ext + 18);
-	const float qx = get_f32(ext + 22);
-	const float qy = get_f32(ext + 26);
-	const float qz = get_f32(ext + 30);
-	const uint8_t fix = ext[34];
-	const uint8_t sat = ext[35];
-	const uint16_t volt = get_u16(ext + 36);
-	const int8_t rem = (int8_t)ext[38];
-	const uint8_t nav = ext[39];
-	const uint8_t arm = ext[40];
+	const float roll = get_f32(ext + 18);
+	const float pitch = get_f32(ext + 22);
+	const float yaw = get_f32(ext + 26);
+	const uint8_t fix = ext[30];
+	const uint8_t sat = ext[31];
+	const uint16_t volt = get_u16(ext + 32);
+	const int8_t rem = (int8_t)ext[34];
+	const uint8_t nav = ext[35];
+	const uint8_t arm = ext[36];
 
 	snprintf(out, out_len,
-		 "lat=%d lon=%d alt=%d vx=%d vy=%d vz=%d q=(%.3f,%.3f,%.3f,%.3f) fix=%u sat=%u volt=%u rem=%d nav=%u arm=%u",
-		 lat, lon, alt, vx, vy, vz, (double)qw, (double)qx, (double)qy, (double)qz, fix, sat, volt, rem, nav, arm);
+		 "lat=%d lon=%d alt=%d vx=%d vy=%d vz=%d roll=%.2f pitch=%.2f yaw=%.2f fix=%u sat=%u volt=%u rem=%d nav=%u arm=%u",
+		 lat, lon, alt, vx, vy, vz, (double)roll, (double)pitch, (double)yaw, fix, sat, volt, rem, nav, arm);
 }
 
 } // namespace MavlinkHeartbeatExt
