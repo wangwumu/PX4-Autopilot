@@ -150,9 +150,9 @@ bool fill(uint8_t *out, uint32_t out_len)
 	put_s16(p + 14, vy);
 	put_s16(p + 16, vz);
 
-	// 姿态（四元数 → 欧拉角）
-	const matrix::Quatf q(att.q[0], att.q[1], att.q[2], att.q[3]);
-	const matrix::Eulerf euler(q);
+	// 姿态（四元数 → 欧拉角）：与 ATTITUDE 消息（msgid 30）同源同换算
+	// （matrix::Quatf(att.q) → Eulerf），PX4 已处理 tailsitter 转换，QGC 显示一致。
+	const matrix::Eulerf euler = matrix::Quatf(att.q);
 	put_f32(p + 18, euler.phi());
 	put_f32(p + 22, euler.theta());
 	put_f32(p + 26, euler.psi());
