@@ -726,12 +726,13 @@ void MavlinkReceiver::handle_message_command_both(mavlink_message_t *msg, const 
 		send_ack = false;
 
 		// 加密链路（解密成功的帧，rx_ok=true）：QGC 用目标 PX4 的 deviceID 拆帧头，
-		// 解密后 sysid/compid = PX4 自己（152/1）。原"同 SYS/COMP 忽略"会把 QGC 命令
-		// （武装/任务/模式切换）误判为自身 echo 而丢弃。GCM tag 认证已保证来源可信，
-		// 故不再忽略（非加密命令 rx_ok=false 不会进入本处理链）。
-		if (msg->sysid == mavlink_system.sysid && msg->compid == mavlink_system.compid) {
-			PX4_DEBUG("processing CMD from same SYS/COMP (encrypted link, trusted)");
-		}
+		// 解密后 sysid/compid 恒为 PX4 自己（依 MAV_DEVICE_ID 而定，如 152/1），故
+		// "同 SYS/COMP"判断恒真，不可再用于丢弃命令。原逻辑会把 QGC 命令（武装/任务/
+		// 模式切换）误判为自身 echo 而丢弃。GCM tag 认证 + counter 防重放已保证来源
+		// 可信且新鲜（rx_ok=true 隐含），故不忽略（非加密命令 rx_ok=false 不会进入本
+		// 处理链）。
+		// 注：源身份未随加密帧携带（明文仅 deviceID），command_ack 的 target 为 PX4
+		// 自身；QGC 侧按 target_system 路由 ACK 时需在解密层还原源 ID。
 
 		if (cmd_mavlink.command == MAV_CMD_LOGGING_START) {
 			// check that we have enough bandwidth available: this is given by the configured logger topics
@@ -939,9 +940,9 @@ MavlinkReceiver::handle_message_set_mode(mavlink_message_t *msg)
 	union px4_custom_mode custom_mode;
 	custom_mode.data = new_mode.custom_mode;
 
-	// [联调诊断] 确认 SET_MODE 被 PX4 处理（模式切换链路）
-	PX4_INFO("CRYPTO-DIAG set_mode received: base=%u custom=0x%08x main=%u sub=%u", new_mode.base_mode,
-		 new_mode.custom_mode, custom_mode.main_mode, custom_mode.sub_mode);
+	// [联调诊断] 确认 SET_MODE 被 PX4 处理（模式切换链路；PX4_DEBUG：release 编空）
+	PX4_DEBUG("CRYPTO-DIAG set_mode received: base=%u custom=0x%08x main=%u sub=%u", new_mode.base_mode,
+		  new_mode.custom_mode, custom_mode.main_mode, custom_mode.sub_mode);
 
 	vehicle_command_s vcmd{};
 

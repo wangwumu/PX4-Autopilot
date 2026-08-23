@@ -718,23 +718,47 @@ Commander::Commander() :
 
 	int32_t value_int32 = 0;
 
-	// systemID/componentID 已并入 deviceID（60822.0 §1.3）：sysid=(deviceID>>8)&0xFF, compid=deviceID&0xFF。
-	// 直接读 MAV_DEVICE_ID 推导，与 mavlink_system.sysid/compid 一致。
-	// 否则 handle_command 的 target_system 检查用 MAV_SYS_ID（默认 1），QGC 命令
-	// target_system=（deviceID>>8)&0xFF 全被 commander 拒绝（含 DO_SET_MODE 模式切换）。
+	// systemID/componentID 已并入 deviceID（60820.0 10_deviceID与payload加密公共规范.md §1.3）：
+	// sysid=(deviceID>>8)&0xFF, compid=deviceID&0xFF。直接读 MAV_DEVICE_ID 推导，
+	// 与 mavlink_system.sysid/compid 一致。否则 handle_command 的 target_system 检查
+	// 用 MAV_SYS_ID（默认 1），QGC 命令 target_system=（deviceID>>8)&0xFF 全被 commander
+	// 拒绝（含 DO_SET_MODE 模式切换）。
 	param_t param_mav_device_id = param_find("MAV_DEVICE_ID");
 	uint32_t crypto_devid = 0;
 
-	if ((param_mav_device_id != PARAM_INVALID) && (param_get(param_mav_device_id, &value_int32) == PX4_OK)) {
+	if (param_mav_device_id == PARAM_INVALID
+	    || param_get(param_mav_device_id, &value_int32) != PX4_OK) {
+		// 读取失败：加密层同样读不到 deviceID 会禁用链路（decrypt 全拒），commander
+		// 静默回退会让模式/命令问题无从定位，显式告警。
+		PX4_WARN("MAV_DEVICE_ID read failed; falling back to MAV_SYS_ID/MAV_COMP_ID");
+
+	} else {
 		crypto_devid = (uint32_t)value_int32;
+
+		// bit24 置位（与 incompat_flags 的 SIGNED 位冲突）视为无效：与 mavlink_credential_load
+		// 一致，加密层会因此禁用链路，commander 侧同样回退，避免两模块对同一参数结论发散。
+		if (crypto_devid & 0x01000000u) {
+			PX4_WARN("invalid MAV_DEVICE_ID 0x%08x (bit24 must be 0); falling back to MAV_SYS_ID/MAV_COMP_ID",
+				 (unsigned)crypto_devid);
+			crypto_devid = 0;
+		}
 	}
 
 	if (crypto_devid != 0) {
-		_vehicle_status.system_id = (uint8_t)((crypto_devid >> 8) & 0xFF);
-		_vehicle_status.component_id = (uint8_t)(crypto_devid & 0xFF);
+		// 范围守卫与 mavlink_main.cpp 对齐：sysid/compid ∈ (0,255)，越界保持默认值。
+		const int sys_id = (int)((crypto_devid >> 8) & 0xFF);
+		const int comp_id = (int)(crypto_devid & 0xFF);
+
+		if (sys_id > 0 && sys_id < 255) {
+			_vehicle_status.system_id = sys_id;
+		}
+
+		if (comp_id > 0 && comp_id < 255) {
+			_vehicle_status.component_id = comp_id;
+		}
 
 	} else {
-		// MAV_DEVICE_ID 未配置：回退原 MAV_SYS_ID/MAV_COMP_ID 参数
+		// MAV_DEVICE_ID 未配置/无效：回退原 MAV_SYS_ID/MAV_COMP_ID 参数
 		if ((param_mav_sys_id != PARAM_INVALID) && (param_get(param_mav_sys_id, &value_int32) == PX4_OK)) {
 			_vehicle_status.system_id = value_int32;
 		}
@@ -818,9 +842,9 @@ Commander::handle_command(const vehicle_command_s &cmd)
 			uint8_t custom_main_mode = (uint8_t)cmd.param2;
 			uint8_t custom_sub_mode = (uint8_t)cmd.param3;
 
-			// [联调诊断] 确认 commander 处理 DO_SET_MODE
-			PX4_INFO("CRYPTO-DIAG commander do_set_mode: base=%u main=%u sub=%u", base_mode, custom_main_mode,
-				 custom_sub_mode);
+			// [联调诊断] 确认 commander 处理 DO_SET_MODE（PX4_DEBUG：release 编空）
+			PX4_DEBUG("CRYPTO-DIAG commander do_set_mode: base=%u main=%u sub=%u", base_mode, custom_main_mode,
+				  custom_sub_mode);
 
 			uint8_t desired_nav_state = vehicle_status_s::NAVIGATION_STATE_MAX;
 			transition_result_t main_ret = TRANSITION_NOT_CHANGED;
@@ -950,9 +974,9 @@ Commander::handle_command(const vehicle_command_s &cmd)
 					main_ret = TRANSITION_DENIED;
 				}
 
-				// [联调诊断] 确认模式切换结果
-				PX4_INFO("CRYPTO-DIAG do_set_mode result: desired_nav=%u main_ret=%d", desired_nav_state,
-					 (int)main_ret);
+				// [联调诊断] 确认模式切换结果（PX4_DEBUG：release 编空）
+				PX4_DEBUG("CRYPTO-DIAG do_set_mode result: desired_nav=%u main_ret=%d", desired_nav_state,
+					  (int)main_ret);
 			}
 
 			if (main_ret != TRANSITION_DENIED) {

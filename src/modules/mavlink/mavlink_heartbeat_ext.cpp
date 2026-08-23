@@ -154,17 +154,18 @@ bool fill(uint8_t *out, uint32_t out_len)
 	put_s16(p + 14, vy);
 	put_s16(p + 16, vz);
 
-	// 姿态（四元数 → 欧拉角，tail-sitter +90° pitch 修正）：
-	// PX4 tail-sitter 四元数在 FW 巡航时以 MC 姿态（机头朝天 pitch+90°）为参考，
-	// 直接提取 Euler 会把"机头正前方"转到垂直方向（yaw 错 90°，万向节死锁）。
-	// 仅在 FW 状态施加 +90° pitch 修正得到虚拟水平帧（机头朝前）→ 与 abc_vtol
-	// quat_leveled 一致；MC 及转换过程中机体本就水平（或姿态即期望欧拉角），
-	// 直接提取。
-	// （参考 ~/abc_vtol/src/vtol_common/include/vtol_common/quaternion_utils.hpp）
+	// 姿态（四元数 → 欧拉角，tail-sitter FW 巡航 +90° pitch 修正）：
+	// ABC VTOL 唯一机体坐标系 = PX4 FRD，机头 = 1、3 旋翼水平前方（见 abc_vtol.h）。
+	// MC 悬停机体水平 pitch≈0，直接提取即可；FW 巡航机体前倾 90°（pitch≈-90°，
+	// body-X 朝下），Euler 提取在此进入万向节死锁、yaw 退化无意义。
+	// 施加 +90° pitch 修正（q_body_to_ned * Ry(+90°)）抵消前倾偏置得到虚拟水平帧
+	// （机头朝前、yaw 保留）——数学上与 abc_vtol quat_leveled 一致。
+	// 仅 tail-sitter（is_vtol_tailsitter）的 FW 状态修正；quadplane/MC/转换直接提取。
 	const matrix::Quatf q_body_to_ned(att.q[0], att.q[1], att.q[2], att.q[3]);
 	matrix::Eulerf euler(q_body_to_ned);
 
-	if (vtol_status.vehicle_vtol_state == vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW) {
+	if (status.is_vtol_tailsitter
+	    && vtol_status.vehicle_vtol_state == vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW) {
 		const matrix::Quatf q_level_to_body(matrix::Eulerf(0.0f, static_cast<float>(M_PI_2), 0.0f));
 		const matrix::Quatf q_leveled = q_body_to_ned * q_level_to_body;
 		euler = matrix::Eulerf(q_leveled);

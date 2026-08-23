@@ -494,7 +494,7 @@ void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, 
 		const bool plain = (out_len == len);
 		const char *use_desc = desc;
 
-		// 建链后 PX4 发加密心跳（5Hz，见 px4-rc.mavlink），此时不应叫"待命心跳"
+		// 建链后 PX4 发加密心跳（20Hz，见 px4-rc.mavlink），此时不应叫"待命心跳"
 		if (msgid == MAVLINK_MSG_ID_HEARTBEAT && !plain) {
 			use_desc = "心跳";
 
