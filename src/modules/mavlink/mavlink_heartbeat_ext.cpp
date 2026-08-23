@@ -150,9 +150,15 @@ bool fill(uint8_t *out, uint32_t out_len)
 	put_s16(p + 14, vy);
 	put_s16(p + 16, vz);
 
-	// 姿态（四元数 → 欧拉角）：与 ATTITUDE 消息（msgid 30）同源同换算
-	// （matrix::Quatf(att.q) → Eulerf），PX4 已处理 tailsitter 转换，QGC 显示一致。
-	const matrix::Eulerf euler = matrix::Quatf(att.q);
+	// 姿态（四元数 → 欧拉角，tail-sitter +90° pitch 修正）：
+	// PX4 tail-sitter 四元数始终以 MC 姿态（机头朝天 pitch+90°）为参考，
+	// 直接提取 Euler 会把"机头正前方"转到垂直方向（yaw 错 90°，万向节死锁）。
+	// 施加 +90° pitch 修正得到虚拟水平帧（机头朝前）→ 与 abc_vtol quat_leveled 一致。
+	// （参考 ~/abc_vtol/src/vtol_common/include/vtol_common/quaternion_utils.hpp）
+	const matrix::Quatf q_body_to_ned(att.q[0], att.q[1], att.q[2], att.q[3]);
+	const matrix::Quatf q_level_to_body(matrix::Eulerf(0.0f, static_cast<float>(M_PI_2), 0.0f));
+	const matrix::Quatf q_leveled = q_body_to_ned * q_level_to_body;
+	const matrix::Eulerf euler(q_leveled);
 	put_f32(p + 18, euler.phi());
 	put_f32(p + 22, euler.theta());
 	put_f32(p + 26, euler.psi());
