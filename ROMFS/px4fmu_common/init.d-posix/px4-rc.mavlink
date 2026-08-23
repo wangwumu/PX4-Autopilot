@@ -18,9 +18,10 @@ if [ -n "$PX4_NET_INTERFACE" ]; then
 	mavlink_network_interface_arg="-n $PX4_NET_INTERFACE -p"
 fi
 mavlink start -x -u $udp_gcs_port_local -r 4000000 -f $mavlink_network_interface_arg
-# 遥测精简（60822.0）：基础状态并入加密心跳 EXT（5Hz），心跳覆盖的遥测流全部关闭。
+# 遥测精简（60822.0）：基础状态并入加密心跳 EXT，心跳覆盖的遥测流全部关闭。
+# 心跳 20Hz：机头指向（EXT yaw）转弯时平滑跟随；VFR_HUD 降频、关 gimbal/扩展状态以降低加密链路 CPU。
 # 仅影响 mavlink 链路；uxrce/DDS、uORB 照常。
-mavlink stream -r 5 -s HEARTBEAT -u $udp_gcs_port_local
+mavlink stream -r 20 -s HEARTBEAT -u $udp_gcs_port_local
 mavlink stream -r 0 -s POSITION_TARGET_LOCAL_NED -u $udp_gcs_port_local
 mavlink stream -r 0 -s LOCAL_POSITION_NED -u $udp_gcs_port_local
 mavlink stream -r 0 -s GLOBAL_POSITION_INT -u $udp_gcs_port_local
@@ -31,6 +32,10 @@ mavlink stream -r 0 -s SERVO_OUTPUT_RAW_0 -u $udp_gcs_port_local
 mavlink stream -r 0 -s RC_CHANNELS -u $udp_gcs_port_local
 mavlink stream -r 0 -s OPTICAL_FLOW_RAD -u $udp_gcs_port_local
 mavlink stream -r 0 -s GPS_RAW_INT -u $udp_gcs_port_local
+mavlink stream -r 1 -s VFR_HUD -u $udp_gcs_port_local
+mavlink stream -r 0 -s GIMBAL_MANAGER_INFORMATION -u $udp_gcs_port_local
+mavlink stream -r 0 -s GIMBAL_MANAGER_STATUS -u $udp_gcs_port_local
+mavlink stream -r 0 -s EXTENDED_SYS_STATE -u $udp_gcs_port_local
 
 # API/Offboard link
 mavlink start -x -u $udp_offboard_port_local -r 4000000 -f -m onboard -o $udp_offboard_port_remote $mavlink_network_interface_arg

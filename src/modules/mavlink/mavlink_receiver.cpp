@@ -725,9 +725,12 @@ void MavlinkReceiver::handle_message_command_both(mavlink_message_t *msg, const 
 	} else {
 		send_ack = false;
 
+		// 加密链路（解密成功的帧，rx_ok=true）：QGC 用目标 PX4 的 deviceID 拆帧头，
+		// 解密后 sysid/compid = PX4 自己（152/1）。原"同 SYS/COMP 忽略"会把 QGC 命令
+		// （武装/任务/模式切换）误判为自身 echo 而丢弃。GCM tag 认证已保证来源可信，
+		// 故不再忽略（非加密命令 rx_ok=false 不会进入本处理链）。
 		if (msg->sysid == mavlink_system.sysid && msg->compid == mavlink_system.compid) {
-			PX4_WARN("ignoring CMD with same SYS/COMP (%" PRIu8 "/%" PRIu8 ") ID", mavlink_system.sysid, mavlink_system.compid);
-			return;
+			PX4_DEBUG("processing CMD from same SYS/COMP (encrypted link, trusted)");
 		}
 
 		if (cmd_mavlink.command == MAV_CMD_LOGGING_START) {
@@ -935,6 +938,10 @@ MavlinkReceiver::handle_message_set_mode(mavlink_message_t *msg)
 
 	union px4_custom_mode custom_mode;
 	custom_mode.data = new_mode.custom_mode;
+
+	// [联调诊断] 确认 SET_MODE 被 PX4 处理（模式切换链路）
+	PX4_INFO("CRYPTO-DIAG set_mode received: base=%u custom=0x%08x main=%u sub=%u", new_mode.base_mode,
+		 new_mode.custom_mode, custom_mode.main_mode, custom_mode.sub_mode);
 
 	vehicle_command_s vcmd{};
 

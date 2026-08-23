@@ -48,6 +48,7 @@
 #include <uORB/topics/vehicle_global_position.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_status.h>
+#include <uORB/topics/vtol_vehicle_status.h>
 
 namespace MavlinkHeartbeatExt
 {
@@ -117,6 +118,7 @@ bool fill(uint8_t *out, uint32_t out_len)
 	static uORB::Subscription gps_sub{ORB_ID(sensor_gps)};
 	static uORB::Subscription batt_sub{ORB_ID(battery_status)};
 	static uORB::Subscription status_sub{ORB_ID(vehicle_status)};
+	static uORB::Subscription vtol_status_sub{ORB_ID(vtol_vehicle_status)};
 
 	vehicle_global_position_s vgp{};
 	vehicle_local_position_s vlp{};
@@ -124,6 +126,7 @@ bool fill(uint8_t *out, uint32_t out_len)
 	sensor_gps_s gps{};
 	battery_status_s batt{};
 	vehicle_status_s status{};
+	vtol_vehicle_status_s vtol_status{};
 
 	vgp_sub.copy(&vgp);
 	vlp_sub.copy(&vlp);
@@ -131,6 +134,7 @@ bool fill(uint8_t *out, uint32_t out_len)
 	gps_sub.copy(&gps);
 	batt_sub.copy(&batt);
 	status_sub.copy(&status);
+	vtol_status_sub.copy(&vtol_status);
 
 	uint8_t *p = out;
 
@@ -151,14 +155,21 @@ bool fill(uint8_t *out, uint32_t out_len)
 	put_s16(p + 16, vz);
 
 	// 姿态（四元数 → 欧拉角，tail-sitter +90° pitch 修正）：
-	// PX4 tail-sitter 四元数始终以 MC 姿态（机头朝天 pitch+90°）为参考，
+	// PX4 tail-sitter 四元数在 FW 巡航时以 MC 姿态（机头朝天 pitch+90°）为参考，
 	// 直接提取 Euler 会把"机头正前方"转到垂直方向（yaw 错 90°，万向节死锁）。
-	// 施加 +90° pitch 修正得到虚拟水平帧（机头朝前）→ 与 abc_vtol quat_leveled 一致。
+	// 仅在 FW 状态施加 +90° pitch 修正得到虚拟水平帧（机头朝前）→ 与 abc_vtol
+	// quat_leveled 一致；MC 及转换过程中机体本就水平（或姿态即期望欧拉角），
+	// 直接提取。
 	// （参考 ~/abc_vtol/src/vtol_common/include/vtol_common/quaternion_utils.hpp）
 	const matrix::Quatf q_body_to_ned(att.q[0], att.q[1], att.q[2], att.q[3]);
-	const matrix::Quatf q_level_to_body(matrix::Eulerf(0.0f, static_cast<float>(M_PI_2), 0.0f));
-	const matrix::Quatf q_leveled = q_body_to_ned * q_level_to_body;
-	const matrix::Eulerf euler(q_leveled);
+	matrix::Eulerf euler(q_body_to_ned);
+
+	if (vtol_status.vehicle_vtol_state == vtol_vehicle_status_s::VEHICLE_VTOL_STATE_FW) {
+		const matrix::Quatf q_level_to_body(matrix::Eulerf(0.0f, static_cast<float>(M_PI_2), 0.0f));
+		const matrix::Quatf q_leveled = q_body_to_ned * q_level_to_body;
+		euler = matrix::Eulerf(q_leveled);
+	}
+
 	put_f32(p + 18, euler.phi());
 	put_f32(p + 22, euler.theta());
 	put_f32(p + 26, euler.psi());

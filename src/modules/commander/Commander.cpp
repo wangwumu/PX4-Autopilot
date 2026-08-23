@@ -718,14 +718,30 @@ Commander::Commander() :
 
 	int32_t value_int32 = 0;
 
-	// MAV_SYS_ID => vehicle_status.system_id
-	if ((param_mav_sys_id != PARAM_INVALID) && (param_get(param_mav_sys_id, &value_int32) == PX4_OK)) {
-		_vehicle_status.system_id = value_int32;
+	// systemID/componentID 已并入 deviceID（60822.0 §1.3）：sysid=(deviceID>>8)&0xFF, compid=deviceID&0xFF。
+	// 直接读 MAV_DEVICE_ID 推导，与 mavlink_system.sysid/compid 一致。
+	// 否则 handle_command 的 target_system 检查用 MAV_SYS_ID（默认 1），QGC 命令
+	// target_system=（deviceID>>8)&0xFF 全被 commander 拒绝（含 DO_SET_MODE 模式切换）。
+	param_t param_mav_device_id = param_find("MAV_DEVICE_ID");
+	uint32_t crypto_devid = 0;
+
+	if ((param_mav_device_id != PARAM_INVALID) && (param_get(param_mav_device_id, &value_int32) == PX4_OK)) {
+		crypto_devid = (uint32_t)value_int32;
 	}
 
-	// MAV_COMP_ID => vehicle_status.component_id
-	if ((param_mav_comp_id != PARAM_INVALID) && (param_get(param_mav_comp_id, &value_int32) == PX4_OK)) {
-		_vehicle_status.component_id = value_int32;
+	if (crypto_devid != 0) {
+		_vehicle_status.system_id = (uint8_t)((crypto_devid >> 8) & 0xFF);
+		_vehicle_status.component_id = (uint8_t)(crypto_devid & 0xFF);
+
+	} else {
+		// MAV_DEVICE_ID 未配置：回退原 MAV_SYS_ID/MAV_COMP_ID 参数
+		if ((param_mav_sys_id != PARAM_INVALID) && (param_get(param_mav_sys_id, &value_int32) == PX4_OK)) {
+			_vehicle_status.system_id = value_int32;
+		}
+
+		if ((param_mav_comp_id != PARAM_INVALID) && (param_get(param_mav_comp_id, &value_int32) == PX4_OK)) {
+			_vehicle_status.component_id = value_int32;
+		}
 	}
 
 	updateParameters();
@@ -802,6 +818,10 @@ Commander::handle_command(const vehicle_command_s &cmd)
 			uint8_t custom_main_mode = (uint8_t)cmd.param2;
 			uint8_t custom_sub_mode = (uint8_t)cmd.param3;
 
+			// [联调诊断] 确认 commander 处理 DO_SET_MODE
+			PX4_INFO("CRYPTO-DIAG commander do_set_mode: base=%u main=%u sub=%u", base_mode, custom_main_mode,
+				 custom_sub_mode);
+
 			uint8_t desired_nav_state = vehicle_status_s::NAVIGATION_STATE_MAX;
 			transition_result_t main_ret = TRANSITION_NOT_CHANGED;
 
@@ -861,10 +881,12 @@ Commander::handle_command(const vehicle_command_s &cmd)
 							break;
 
 #if CONFIG_MODE_NAVIGATOR_VTOL_TAKEOFF
+
 						case PX4_CUSTOM_SUB_MODE_AUTO_VTOL_TAKEOFF:
 							desired_nav_state = vehicle_status_s::NAVIGATION_STATE_AUTO_VTOL_TAKEOFF;
 							break;
 #endif // CONFIG_MODE_NAVIGATOR_VTOL_TAKEOFF
+
 						case PX4_CUSTOM_SUB_MODE_EXTERNAL1...PX4_CUSTOM_SUB_MODE_EXTERNAL8:
 							desired_nav_state = vehicle_status_s::NAVIGATION_STATE_EXTERNAL1 + (custom_sub_mode - PX4_CUSTOM_SUB_MODE_EXTERNAL1);
 							break;
@@ -927,6 +949,10 @@ Commander::handle_command(const vehicle_command_s &cmd)
 
 					main_ret = TRANSITION_DENIED;
 				}
+
+				// [联调诊断] 确认模式切换结果
+				PX4_INFO("CRYPTO-DIAG do_set_mode result: desired_nav=%u main_ret=%d", desired_nav_state,
+					 (int)main_ret);
 			}
 
 			if (main_ret != TRANSITION_DENIED) {
