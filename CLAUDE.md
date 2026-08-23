@@ -8,8 +8,8 @@ PX4 fork at v1.17.0 with two major in-house customizations (branch `DID4B_Aes`):
 1. **MAVLink 加密层** — 32-bit deviceID + AES-256-GCM payload 加密 + 密钥握手
 2. **ABC VTOL** — 尾座式三旋翼/四旋翼 VTOL 机型与 Gazebo 模型
 
-协议规范的中文文档集中在 `docs/docs/60820.0/`（最新权威版本，见下文「协议文档」），改动清单在 `docs/changes.md`。
-**改加密/握手机制前先读 `docs/docs/60820.0/10_deviceID与payload加密公共规范.md`**——它是各工程共同遵守的权威蓝本，实现须以它为准。
+协议规范的中文文档集中在 `docs/docs/60822.0/`（最新权威版本，见下文「协议文档」），改动清单在 `docs/changes.md`。
+**改加密/握手机制前先读 `docs/docs/60822.0/10_deviceID与payload加密公共规范.md`**——它是各工程共同遵守的权威蓝本，实现须以它为准。
 
 ## Commits & PRs
 
@@ -74,12 +74,12 @@ PX4 基于 **uORB**（DDS 兼容的发布/订阅中间件）：消息类型在 `
 - `src/modules/device_credential/` — companion computer 密钥握手服务端（独立模块）
 - `src/lib/crypto/mavlink_credential.cpp/.h` — 凭据读写
 
-要点（详见 `docs/docs/60820.0/10_deviceID与payload加密公共规范.md`）：
+要点（详见 `docs/docs/60822.0/10_deviceID与payload加密公共规范.md`）：
 - **32-bit deviceID**：由帧头 `incompatFlag/compatFlag/systemID/componentID` 4 字节重组（`deviceID = (inc<<24)|(com<<16)|(sys<<8)|comp`）。`MAV_DEVICE_ID` 参数为设备标识，0 表示未配置（加密关闭）。
 - **AES-256-GCM**：payload block = `counter(8B) || ciphertext || tag(16B)`；GCM nonce = `counter(8B, BE) || deviceID(4B, BE)`；overhead = 28B（`MavlinkCrypto::OVERHEAD`）。
 - **防重放**：单密钥 + 奇偶分家（下行偶数/上行奇数）+ 按需建链 + `本次 > lastNonce` 判定。
 - **密钥来源**：`/fs/microsd/mavlink_key.bin`（32 字节），缺失时回退内建开发密钥（生产须换硬件密钥库）。
-- **明文特例**：待命 HEARTBEAT 明文发送（deviceID 在帧头、不带加密），其余帧一律加密，外部明文设备帧丢弃。
+- **明文特例**：待命 HEARTBEAT 明文发送（deviceID 在帧头、不带加密），GCS(Normal) 实例其余帧一律加密、外部明文设备帧丢弃；Onboard/Gimbal 本机内部链路明文（60822.0 §2.5「加密范围限定」）。
 - 业务消息 `msgid 80000–80003` 已纳入加密。
 
 ## 定制二：ABC VTOL
@@ -96,10 +96,10 @@ PX4_SYS_AUTOSTART=13889 ./build/px4_sitl_default/bin/px4
 
 ## 协议文档（中文，权威）
 
-协议规范以 `docs/docs/60820.0/`（最新版本目录）为准，主 `docs/` 不再维护协议副本：
-- `docs/docs/60820.0/10_deviceID与payload加密公共规范.md` — deviceID + 加密 + 握手总规范（**改协议先读它**）
-- `docs/docs/60820.0/11_deviceID与incompat_flags冲突说明.md` — deviceID 与标准 MAVLink 解析器的兼容约束
-- `docs/docs/60820.0/mavlink_extension_protocol.md`、`docs/docs/60820.0/mavlink_mavros扩展记录.md` — 扩展消息 / mavros 侧对齐
+协议规范以 `docs/docs/60822.0/`（最新版本目录）为准，主 `docs/` 不再维护协议副本：
+- `docs/docs/60822.0/10_deviceID与payload加密公共规范.md` — deviceID + 加密 + 握手总规范（**改协议先读它**）
+- `docs/docs/60822.0/11_deviceID与incompat_flags冲突说明.md` — deviceID 与标准 MAVLink 解析器的兼容约束
+- `docs/docs/60822.0/mavlink_extension_protocol.md`、`docs/docs/60822.0/mavlink_mavros扩展记录.md` — 扩展消息 / mavros 侧对齐
 
 其余变更记录（主 `docs/`）：
 - `docs/fw_offboard_heading_bug_fix.md` — FW offboard 航向不跟随修复（NPFG course → attitude → rate setpoint）

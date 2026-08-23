@@ -289,6 +289,7 @@ private:
 
 	uint64_t _total_received_counter{0};                            ///< The total number of successfully received messages
 	uint64_t _total_lost_counter{0};                                ///< Total messages lost during transmission.
+	unsigned _enc_rx_drop_warn{0};                                  ///< 非 NORMAL 实例加密帧/NONCE_SYNC 丢弃计数（告警限频/周期重报）
 
 	uint8_t _mavlink_status_last_buffer_overrun{0};
 	uint8_t _mavlink_status_last_parse_error{0};

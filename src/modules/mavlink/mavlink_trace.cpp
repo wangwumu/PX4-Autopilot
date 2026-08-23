@@ -192,7 +192,7 @@ void ensure_open()
 
 	if (s_fd >= 0) {
 		const char *hdr =
-			"    序号 时间 发送端 类型 命令 deviceID 明/密 解析 报文说明 长度 报文内容\n";
+			"    序号 时间 发送端 类型 命令 deviceID 明/密 解析 报文说明 长度 nonce 报文内容\n";
 		trace_write(s_fd, hdr, strlen(hdr));
 
 	} else if (!s_open_warned) {
@@ -224,7 +224,7 @@ void buf_pad(char *buf, size_t bufsz, size_t &off, const char *s, int width)
 
 // 组装并写入一行。加全局锁保证多实例并发时不交错、序号单调。
 void write_line(bool tx, const char *type, uint32_t msgid, uint32_t devid,
-		bool plain, bool ok, const char *desc, uint32_t plen, const char *content)
+		bool plain, bool ok, const char *desc, uint32_t plen, uint64_t nonce, const char *content)
 {
 	pthread_mutex_lock(&s_trace_lock);
 	ensure_open();
@@ -262,6 +262,10 @@ void write_line(bool tx, const char *type, uint32_t msgid, uint32_t devid,
 
 		snprintf(tmp, sizeof(tmp), "%3u", plen);
 		buf_pad(line, sizeof(line), off, tmp, 3);
+
+		// nonce 计数器（加密帧 payload block 前 8 字节，大端解出；明文帧为 0）
+		snprintf(tmp, sizeof(tmp), "%20llu", (unsigned long long)nonce);
+		buf_pad(line, sizeof(line), off, tmp, 20);
 
 		snprintf(line + off, sizeof(line) - off, "%s\n", content);
 
@@ -466,7 +470,7 @@ void MavlinkTrace::parse_content(uint32_t msgid, const uint8_t *payload, uint32_
 #undef APPEND
 }
 
-void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, const char *fail_reason)
+void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, uint64_t counter)
 {
 	if (!frame || frame[0] != MAVLINK_STX) {
 		return;
@@ -484,37 +488,31 @@ void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, 
 	const char *type;
 	parse_content(msgid, payload, plen, content, sizeof(content), &desc, &type);
 
-	if (fail_reason) {
-		// 加密失败被丢弃：明文帧，日志标 F（content 已被 fail_reason 覆盖说明）
-		write_line(true, type, msgid, devid, true, false, desc, plen, fail_reason);
+	// 仅明文待命心跳（encrypt_frame 不改长度，out_len==len）标 M；
+	// 加密帧含超限退化帧（payload 退化为仅 deviceID，out_len<len）均为 C。
+	const bool plain = (out_len == len);
+	const char *use_desc = desc;
 
-	} else {
-		// 仅明文待命心跳（encrypt_frame 不改长度，out_len==len）标 M；
-		// 加密帧含超限退化帧（payload 退化为仅 deviceID，out_len<len）均为 C。
-		const bool plain = (out_len == len);
-		const char *use_desc = desc;
+	// 建链后 PX4 发加密心跳（20Hz，见 px4-rc.mavlink），此时不应叫"待命心跳"
+	if (msgid == MAVLINK_MSG_ID_HEARTBEAT && !plain) {
+		use_desc = "心跳";
 
-		// 建链后 PX4 发加密心跳（20Hz，见 px4-rc.mavlink），此时不应叫"待命心跳"
-		if (msgid == MAVLINK_MSG_ID_HEARTBEAT && !plain) {
-			use_desc = "心跳";
+		// 加密心跳扩展（60822.0）：发送日志也显示 EXT 基础状态
+		//（此处为日志时重新 fill，与帧内近似——供日志参考）
+		uint8_t ext[MavlinkHeartbeatExt::kExtLen];
+		char extbuf[256];
 
-			// 加密心跳扩展（60822.0）：发送日志也显示 EXT 基础状态
-			//（此处为日志时重新 fill，与帧内近似——供日志参考）
-			uint8_t ext[MavlinkHeartbeatExt::kExtLen];
-			char extbuf[256];
-
-			if (MavlinkHeartbeatExt::fill(ext, sizeof(ext))) {
-				MavlinkHeartbeatExt::parse(ext, sizeof(ext), extbuf, sizeof(extbuf));
-				const size_t clen = strlen(content);
-				snprintf(content + clen, sizeof(content) - clen, " | %s", extbuf);
-			}
+		if (MavlinkHeartbeatExt::fill(ext, sizeof(ext))) {
+			MavlinkHeartbeatExt::parse(ext, sizeof(ext), extbuf, sizeof(extbuf));
+			const size_t clen = strlen(content);
+			snprintf(content + clen, sizeof(content) - clen, " | %s", extbuf);
 		}
-
-		write_line(true, type, msgid, devid, plain, true, use_desc, plen, content);
 	}
+
+	write_line(true, type, msgid, devid, plain, true, use_desc, plen, counter, content);
 }
 
-void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, const char *reason)
+void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, const char *reason, uint64_t counter)
 {
 	const uint32_t msgid = msg.msgid;
 	const uint8_t *payload = (const uint8_t *)msg.payload64;
@@ -549,7 +547,7 @@ void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, con
 		snprintf(content, sizeof(content), "解析失败: %s", reason);
 	}
 
-	write_line(false, type, msgid, devid, plain, ok, desc, plen, content);
+	write_line(false, type, msgid, devid, plain, ok, desc, plen, counter, content);
 }
 #else
 // MAVLINK_TRACE_ENABLED 未定义：空实现，零运行时开销
@@ -571,19 +569,20 @@ void MavlinkTrace::parse_content(uint32_t msgid, const uint8_t *payload, uint32_
 	(void)type;
 }
 
-void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, const char *fail_reason)
+void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, uint64_t counter)
 {
 	(void)frame;
 	(void)len;
 	(void)out_len;
-	(void)fail_reason;
+	(void)counter;
 }
 
-void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, const char *reason)
+void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, const char *reason, uint64_t counter)
 {
 	(void)msg;
 	(void)ok;
 	(void)plain;
 	(void)reason;
+	(void)counter;
 }
 #endif

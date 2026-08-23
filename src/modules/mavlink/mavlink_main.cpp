@@ -750,7 +750,9 @@ void Mavlink::send_start(int length)
 	_last_write_try_time = hrt_absolute_time();
 
 	// payload encryption expands the frame by counter(8) + deviceID(4) + tag(16)
-	const uint32_t crypto_overhead = MavlinkCrypto::instance().enabled() ? MavlinkCrypto::OVERHEAD : 0;
+	// 仅 GCS(Normal) 实例加密（60822.0 §2.5），非 NORMAL 内部链路明文，不预留加密开销
+	const uint32_t crypto_overhead = (_mode == MAVLINK_MODE_NORMAL && MavlinkCrypto::instance().enabled())
+					 ? MavlinkCrypto::OVERHEAD : 0;
 
 	// check if there is space in the buffer
 	if (length + (int)crypto_overhead > (int)get_free_tx_buf()) {
@@ -799,18 +801,37 @@ void Mavlink::send_finish()
 		}
 	}
 
-	// Encrypt the outgoing frame payload (deviceID + AES-256-GCM). On failure
-	// (crypto unconfigured or non-v2 frame) the frame is dropped — this link
-	// never transmits plaintext.
+	// Encrypt the outgoing frame payload (deviceID + AES-256-GCM) — 仅 Normal（GCS
+	// 广域网链路）实例加密；其余所有实例（Onboard/Gimbal 等本机内部链路：companion/
+	// 相机/云台）明文原样发送——接收方无密钥、无需加密。加密范围限定 GCS 与 60822.0
+	// §2.5「加密范围限定（60822.0）」一致，PX4 实现上仅 GCS(Normal) 实例调用 encrypt_frame。
 	uint16_t encrypted_len = (uint16_t)_buf_fill;
 
-	if (!MavlinkCrypto::instance().encrypt_frame(_buf, &encrypted_len)) {
-		// 加密失败被丢弃的帧不写入联调日志（避免 standby 遥测丢弃噪声刷屏）；
-		// 日志只记录实际发送的报文（明文待命心跳 / 加密帧）。
-		count_txerrbytes(_buf_fill);
-		_buf_fill = 0;
-		pthread_mutex_unlock(&_send_mutex);
-		return;
+	if (_mode == MAVLINK_MODE_NORMAL) {
+		if (!MavlinkCrypto::instance().encrypt_frame(_buf, &encrypted_len)) {
+			// 加密失败丢弃（deviceID 未配置 / nonce 预算耗尽 / GCM 失败 / 非 v2 / 待命非心跳）。
+			// 周期告警：前 20 次逐条、之后每 1024 帧重报一条、加密成功即复位——避免一次性配额
+			// 在持续性故障（deviceID 未配置/预算耗尽/待命不建链）下耗尽后永久静默，重演联调时
+			// "QGC 请求无响应却无日志"；被丢帧不进 trace（log_tx 只在成功路径到达）。
+			if (_buf[0] == MAVLINK_STX) {
+				const uint32_t fail_msgid = (uint32_t)_buf[7] | ((uint32_t)_buf[8] << 8) | ((uint32_t)_buf[9] << 16);
+
+				if (_enc_fail_count < 20 || (_enc_fail_count & 0x3FF) == 0) {
+					PX4_WARN("mavlink_crypto: encrypt_frame failed (%u since last warn, %s), dropping msgid=%u len=%u",
+						 (unsigned)_enc_fail_count, MavlinkCrypto::instance().last_error_str(),
+						 (unsigned)fail_msgid, (unsigned)_buf_fill);
+				}
+			}
+
+			_enc_fail_count++;
+			count_txerrbytes(_buf_fill);
+			_buf_fill = 0;
+			pthread_mutex_unlock(&_send_mutex);
+			return;
+		}
+
+		// 加密成功：复位失败计数（瞬时故障不消耗周期告警配额）
+		_enc_fail_count = 0;
 	}
 
 	_buf_fill = encrypted_len;
@@ -869,7 +890,19 @@ void Mavlink::send_finish()
 		// 联调日志：仅记录 GCS（Normal）实例实际发送给 QGC 的报文
 		//（Onboard/Gimbal 等非 GCS 实例的遥测不写日志）
 		if (trace_len > 0 && _mode == MAVLINK_MODE_NORMAL) {
-			MavlinkTrace::instance().log_tx(trace_frame, trace_len, encrypted_len, nullptr);
+			// 加密帧 nonce：encrypt_frame 后 _buf 已覆盖为 block(counter||ct||tag)，
+			// payload 起点 = 帧头 10B（MAVLink V2），前 8 字节为大端 counter。
+			// 明文待命心跳（out_len==len）未加密、无 counter，记 0。
+			uint64_t tx_counter = 0;
+
+			if (encrypted_len != trace_len && encrypted_len >= 10 + 8) {
+				const uint8_t *blk = &_buf[10];
+				tx_counter = ((uint64_t)blk[0] << 56) | ((uint64_t)blk[1] << 48) | ((uint64_t)blk[2] << 40)
+					     | ((uint64_t)blk[3] << 32) | ((uint64_t)blk[4] << 24) | ((uint64_t)blk[5] << 16)
+					     | ((uint64_t)blk[6] << 8) | (uint64_t)blk[7];
+			}
+
+			MavlinkTrace::instance().log_tx(trace_frame, trace_len, encrypted_len, tx_counter);
 		}
 
 		_last_write_success_time = _last_write_try_time;

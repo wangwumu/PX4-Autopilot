@@ -641,6 +641,7 @@ private:
 	unsigned		_buf_fill{0};
 
 	bool			_tx_buffer_low{false};
+	unsigned		_enc_fail_count{0};	// 连续加密失败帧数（告警限频/周期重报用，加密成功复位）
 
 	const char 		*_interface_name{nullptr};
 

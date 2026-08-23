@@ -276,6 +276,7 @@ bool MavlinkCrypto::emit_plaintext_heartbeat(uint8_t *frame, uint32_t msgid)
 			PX4_ERR("mavlink_crypto: standby, dropping non-heartbeat msgid %u (no link)", (unsigned)msgid);
 		}
 
+		_last_enc_error = "standby non-heartbeat";
 		return false;
 	}
 
@@ -308,6 +309,7 @@ bool MavlinkCrypto::emit_plaintext_heartbeat(uint8_t *frame, uint32_t msgid)
 bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 {
 	if (_device_id == 0) {
+		_last_enc_error = "deviceID unset";
 		return false;
 	}
 
@@ -318,6 +320,7 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 			_warned_no_v2 = true;
 		}
 
+		_last_enc_error = "non-v2 frame";
 		return false;
 	}
 
@@ -381,6 +384,7 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 			PX4_ERR("mavlink_crypto: tx counter at 2^62 nonce budget, refusing to send; link must be re-keyed");
 		}
 
+		_last_enc_error = "tx counter exhausted";
 		return false;
 	}
 
@@ -399,6 +403,7 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 			PX4_ERR("mavlink_crypto: encryption failed");
 		}
 
+		_last_enc_error = "encryption failed";
 		return false;
 	}
 

@@ -57,17 +57,18 @@ public:
 	/**
 	 * 记录一条 PX4 发出的报文。
 	 * `frame` 为 encrypt_frame 之前的明文原始帧（[magic][len][inc][com][seq][sys][comp][msgid x3][payload][crc x2]），
-	 * `len` 为明文帧总长，`out_len` 为 encrypt_frame 后的帧长（==len 表示明文待命心跳，>len 表示密文），
-	 * `fail_reason` 非空表示加密失败被丢弃（frame 为明文，ok=false）。
+	 * `len` 为明文帧总长，`out_len` 为 encrypt_frame 后的帧长（==len 表示明文待命心跳，!=len 表示密文——加密恒改长度）。
+	 * `counter` 为加密帧 payload block 前 8 字节解出的 nonce 计数器（明文帧为 0）。
 	 */
-	void log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, const char *fail_reason);
+	void log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, uint64_t counter);
 
 	/**
 	 * 记录一条 PX4 收到的报文（来自 QGC）。
 	 * `msg` 为 decrypt_message 之后的消息：ok=true 时已是明文标准消息；ok=false 时保持原始帧。
 	 * `plain` 指示网络上是明文（M）还是密文（C）。`reason` 为失败原因（NULL 时内部推断）。
+	 * `counter` 为 decrypt 前原始加密帧 payload block 前 8 字节解出的 nonce 计数器（明文特例传 0）。
 	 */
-	void log_rx(const mavlink_message_t &msg, bool ok, bool plain, const char *reason);
+	void log_rx(const mavlink_message_t &msg, bool ok, bool plain, const char *reason, uint64_t counter);
 
 private:
 	MavlinkTrace() = default;

@@ -725,14 +725,14 @@ void MavlinkReceiver::handle_message_command_both(mavlink_message_t *msg, const 
 	} else {
 		send_ack = false;
 
-		// 加密链路（解密成功的帧，rx_ok=true）：QGC 用目标 PX4 的 deviceID 拆帧头，
-		// 解密后 sysid/compid 恒为 PX4 自己（依 MAV_DEVICE_ID 而定，如 152/1），故
-		// "同 SYS/COMP"判断恒真，不可再用于丢弃命令。原逻辑会把 QGC 命令（武装/任务/
-		// 模式切换）误判为自身 echo 而丢弃。GCM tag 认证 + counter 防重放已保证来源
-		// 可信且新鲜（rx_ok=true 隐含），故不忽略（非加密命令 rx_ok=false 不会进入本
-		// 处理链）。
-		// 注：源身份未随加密帧携带（明文仅 deviceID），command_ack 的 target 为 PX4
-		// 自身；QGC 侧按 target_system 路由 ACK 时需在解密层还原源 ID。
+		// 本分支（send_ack=false）处理无需显式 ACK 的命令。GCS 解密帧（NORMAL 实例）经
+		// decrypt_message 重建后 sysid/compid 恒为 PX4 自身（依 MAV_DEVICE_ID，如 152/1），
+		// GCM 认证 + counter 防重放保证来源可信且新鲜；Onboard/Gimbal 明文命令（内部链路，
+		// 60822.0 §2.5「加密范围限定」）不经解密直接到达——信任模型为本机内部链路可信，
+		// 无 GCM/防重放，来源是真实 sysid（通常 ≠ PX4），命令按 target 校验放行。若部署
+		// 需更强约束，应在非 NORMAL 实例对 command 类消息增加源白名单。
+		// 注：加密帧不携带源身份（明文仅 deviceID），command_ack 的 target 为 PX4 自身；
+		// QGC 侧按 target_system 路由 ACK 时需在解密层还原源 ID。
 
 		if (cmd_mavlink.command == MAV_CMD_LOGGING_START) {
 			// check that we have enough bandwidth available: this is given by the configured logger topics
@@ -939,10 +939,6 @@ MavlinkReceiver::handle_message_set_mode(mavlink_message_t *msg)
 
 	union px4_custom_mode custom_mode;
 	custom_mode.data = new_mode.custom_mode;
-
-	// [联调诊断] 确认 SET_MODE 被 PX4 处理（模式切换链路；PX4_DEBUG：release 编空）
-	PX4_DEBUG("CRYPTO-DIAG set_mode received: base=%u custom=0x%08x main=%u sub=%u", new_mode.base_mode,
-		  new_mode.custom_mode, custom_mode.main_mode, custom_mode.sub_mode);
 
 	vehicle_command_s vcmd{};
 
@@ -3237,12 +3233,81 @@ MavlinkReceiver::run()
 				for (ssize_t i = 0; i < nread; i++) {
 					if (mavlink_parse_char(_mavlink.get_channel(), buf[i], &msg, &_status)) {
 
-						// Decrypt the frame payload. Plaintext / wrong-key / replay / tampered
-						// frames are dropped here; the NONCE_SYNC control frame (msgid 80004)
-						// is consumed here as well, never delivered to the normal handler.
 						const uint16_t rx_raw_len = msg.len;
+
+						// 加密帧 nonce：decrypt_message 前原始 payload block 前 8 字节 = 大端 counter。
+						// 条件与 decrypt_message 预检一致（len>=28 且 deviceID 匹配）；明文特例
+						// （待命心跳 len<28 / NONCE_SYNC len=8）非加密 block，记 0。QGC 登记 80005
+						// 若 len>=28 且帧头 deviceID 匹配会解出非 0 值（仅日志参考；该帧随后被
+						// decrypt_message 认证失败丢弃，不影响解密正确性）。
+						uint64_t rx_counter = 0;
+
+						if (rx_raw_len >= 28) {
+							const uint32_t rx_devid = ((uint32_t)msg.incompat_flags << 24)
+										  | ((uint32_t)msg.compat_flags << 16)
+										  | ((uint32_t)msg.sysid << 8) | (uint32_t)msg.compid;
+
+							if (rx_devid == MavlinkCrypto::instance().device_id()) {
+								const uint8_t *blk = (const uint8_t *)msg.payload64;
+								rx_counter = ((uint64_t)blk[0] << 56) | ((uint64_t)blk[1] << 48)
+									     | ((uint64_t)blk[2] << 40) | ((uint64_t)blk[3] << 32)
+									     | ((uint64_t)blk[4] << 24) | ((uint64_t)blk[5] << 16)
+									     | ((uint64_t)blk[6] << 8) | (uint64_t)blk[7];
+							}
+						}
+
 						bool consumed = false;
-						const bool rx_ok = MavlinkCrypto::instance().decrypt_message(&msg, &consumed);
+						bool rx_ok;
+
+						if (_mavlink.get_mode() == Mavlink::MAVLINK_MODE_NORMAL) {
+							// GCS 实例：QGC 加密帧走解密门（防重放/GCM 认证/明文帧丢弃）
+							rx_ok = MavlinkCrypto::instance().decrypt_message(&msg, &consumed);
+
+						} else {
+							// Onboard/Gimbal 实例：本机内部链路明文帧直接放行（不解密）。
+							// 廉价守卫：本机 deviceID 高 16 位非零（incompat/compat 携带 deviceID
+							// 特征；正常明文帧这两字节恒 0）且帧头高 16 位非零、长度 ≥ 加密 block
+							// 最小 28B 时，判定为加密帧误入本实例——无论目标 deviceID 是否为本机
+							// （跨设备串扰/广播同样丢弃，避免密文 block 按明文解析得到随机命令/遥测）。
+							// 高位门槛杜绝误杀：明文帧 frame_devid 恒 < 2^16（sys/comp 各 8bit、
+							// inc/com=0），本链路无签名帧，故高 16 位非零只可能来自加密帧头。
+							// 16 位 deviceID 配置下本守卫不触发（明文帧与加密帧帧头无法区分，属已知限制）。
+							const uint32_t myDeviceID = MavlinkCrypto::instance().device_id();
+							const uint32_t frame_devid = ((uint32_t)msg.incompat_flags << 24)
+										     | ((uint32_t)msg.compat_flags << 16)
+										     | ((uint32_t)msg.sysid << 8) | (uint32_t)msg.compid;
+
+							if ((myDeviceID >> 16) != 0 && (frame_devid >> 16) != 0 && msg.len >= 28) {
+								// 前 10 次逐条、之后每 1024 帧重报一条（防一次性配额耗尽后永久静默）；
+								// 丢弃计入 rx_packet_drop_count 使遥测可见
+								if (_enc_rx_drop_warn < 10 || (_enc_rx_drop_warn & 0x3FF) == 0) {
+									PX4_WARN("mavlink_crypto: encrypted frame on non-NORMAL instance dropped msgid=%u len=%u",
+										 (unsigned)msg.msgid, (unsigned)msg.len);
+								}
+
+								_enc_rx_drop_warn++;
+								_mavlink.telemetry_status().rx_packet_drop_count++;
+								continue;
+							}
+
+							// NONCE_SYNC (80004)：Onboard/Gimbal 明文链路无密钥、不再消费（加密仅限
+							// GCS，60822.0 §2.5）。显式识别并限频说明，避免落入 default 静默丢弃——
+							// 便于联调判断 mavros/companion 是否仍按旧协议在内部链路发送 80004。
+							// 与加密帧丢弃共用 _enc_rx_drop_warn 计数（同周期条件：前 10 逐条、之后每
+							// 1024 条重报一条），统一降噪预算。
+							if (msg.msgid == 80004) {
+								if (_enc_rx_drop_warn < 10 || (_enc_rx_drop_warn & 0x3FF) == 0) {
+									PX4_WARN("mavlink_crypto: NONCE_SYNC on non-NORMAL instance ignored (encryption is GCS-only) msgid=%u",
+										 (unsigned)msg.msgid);
+								}
+
+								_enc_rx_drop_warn++;
+								continue;
+							}
+
+							rx_ok = true;
+							consumed = false;
+						}
 
 						if (!rx_ok) {
 							// 联调日志（仅 GCS/Normal 实例）：NONCE_SYNC 被接受时正常消费（S）；
@@ -3250,11 +3315,11 @@ MavlinkReceiver::run()
 							// 明文特例（QGC 登记 80005 / 待命心跳 len<28）标 M，其余为密文 C。
 							if (_mavlink.get_mode() == Mavlink::MAVLINK_MODE_NORMAL) {
 								if (consumed) {
-									MavlinkTrace::instance().log_rx(msg, true, true, nullptr);
+									MavlinkTrace::instance().log_rx(msg, true, true, nullptr, rx_counter);
 
 								} else {
 									const bool rx_plain = (msg.msgid == 80005) || ((msg.msgid == 0) && (rx_raw_len < 28));
-									MavlinkTrace::instance().log_rx(msg, false, rx_plain, nullptr);
+									MavlinkTrace::instance().log_rx(msg, false, rx_plain, nullptr, rx_counter);
 								}
 							}
 
@@ -3263,7 +3328,7 @@ MavlinkReceiver::run()
 
 						// 联调日志（仅 GCS/Normal 实例）：解密成功的加密帧（网络为密文 C）
 						if (_mavlink.get_mode() == Mavlink::MAVLINK_MODE_NORMAL) {
-							MavlinkTrace::instance().log_rx(msg, true, false, nullptr);
+							MavlinkTrace::instance().log_rx(msg, true, false, nullptr, rx_counter);
 						}
 
 						// If we receive a complete MAVLink 2 packet, also switch the outgoing protocol version
