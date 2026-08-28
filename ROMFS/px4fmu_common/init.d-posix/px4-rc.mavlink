@@ -1,6 +1,10 @@
 #!/bin/sh
 # shellcheck disable=SC2154
 
+# 以下 offboard/onboard/gcs 端口变量 —— §9 后仅保留备用:
+#   * GCS 加密实例改用 loopback 端口 14570 硬编码 (bind 14570, 发 127.0.0.1:14540),
+#     仅支持单实例 loopback (px4_instance>0 会端口冲突, 多实例需同步调整 mavros Router fcu_url);
+#   * offboard/camera/gimbal 实例已注释, 恢复时需用对应变量。
 udp_offboard_port_local=$((14580+px4_instance))
 udp_offboard_port_remote=$((14540+px4_instance))
 [ "$px4_instance" -gt 9 ] && udp_offboard_port_remote=14549 # use the same ports for more than 10 instances to avoid port overlaps
@@ -17,34 +21,34 @@ if [ -n "$PX4_NET_INTERFACE" ]; then
 	# And -p to enable broadcasting on that interface, and not be in localhost mode only.
 	mavlink_network_interface_arg="-n $PX4_NET_INTERFACE -p"
 fi
-mavlink start -x -u $udp_gcs_port_local -r 4000000 -f $mavlink_network_interface_arg
+mavlink start -x -u 14570 -o 14540 -t 127.0.0.1 -r 4000000   # §9: mavros Router 加密链路 (bind 14570 收, 加密发 127.0.0.1:14540; -x=MAVLink FTP, 保留 QGC 日志/文件下载)
 # 遥测精简（60822.0）：基础状态并入加密心跳 EXT，心跳覆盖的遥测流全部关闭。
 # 心跳 20Hz：机头指向（EXT yaw）转弯时平滑跟随；VFR_HUD 降频、关 gimbal/扩展状态以降低加密链路 CPU。
 # 仅影响 mavlink 链路；uxrce/DDS、uORB 照常。
-mavlink stream -r 20 -s HEARTBEAT -u $udp_gcs_port_local
-mavlink stream -r 0 -s POSITION_TARGET_LOCAL_NED -u $udp_gcs_port_local
-mavlink stream -r 0 -s LOCAL_POSITION_NED -u $udp_gcs_port_local
-mavlink stream -r 0 -s GLOBAL_POSITION_INT -u $udp_gcs_port_local
-mavlink stream -r 0 -s ATTITUDE -u $udp_gcs_port_local
-mavlink stream -r 0 -s ATTITUDE_QUATERNION -u $udp_gcs_port_local
-mavlink stream -r 0 -s ATTITUDE_TARGET -u $udp_gcs_port_local
-mavlink stream -r 0 -s SERVO_OUTPUT_RAW_0 -u $udp_gcs_port_local
-mavlink stream -r 0 -s RC_CHANNELS -u $udp_gcs_port_local
-mavlink stream -r 0 -s OPTICAL_FLOW_RAD -u $udp_gcs_port_local
-mavlink stream -r 0 -s GPS_RAW_INT -u $udp_gcs_port_local
-mavlink stream -r 1 -s VFR_HUD -u $udp_gcs_port_local
-mavlink stream -r 0 -s GIMBAL_MANAGER_INFORMATION -u $udp_gcs_port_local
-mavlink stream -r 0 -s GIMBAL_MANAGER_STATUS -u $udp_gcs_port_local
-mavlink stream -r 0 -s EXTENDED_SYS_STATE -u $udp_gcs_port_local
+mavlink stream -r 20 -s HEARTBEAT -u 14570
+mavlink stream -r 0 -s POSITION_TARGET_LOCAL_NED -u 14570
+mavlink stream -r 0 -s LOCAL_POSITION_NED -u 14570
+mavlink stream -r 0 -s GLOBAL_POSITION_INT -u 14570
+mavlink stream -r 0 -s ATTITUDE -u 14570
+mavlink stream -r 0 -s ATTITUDE_QUATERNION -u 14570
+mavlink stream -r 0 -s ATTITUDE_TARGET -u 14570
+mavlink stream -r 0 -s SERVO_OUTPUT_RAW_0 -u 14570
+mavlink stream -r 0 -s RC_CHANNELS -u 14570
+mavlink stream -r 0 -s OPTICAL_FLOW_RAD -u 14570
+mavlink stream -r 0 -s GPS_RAW_INT -u 14570
+mavlink stream -r 1 -s VFR_HUD -u 14570
+mavlink stream -r 0 -s GIMBAL_MANAGER_INFORMATION -u 14570
+mavlink stream -r 0 -s GIMBAL_MANAGER_STATUS -u 14570
+mavlink stream -r 0 -s EXTENDED_SYS_STATE -u 14570
 
-# API/Offboard link
-mavlink start -x -u $udp_offboard_port_local -r 4000000 -f -m onboard -o $udp_offboard_port_remote $mavlink_network_interface_arg
+# API/Offboard link —— §9 修订: 注释（PX4 只经 mavros Router 一条加密链路, 数据不出 WSL; 需要时取消注释）
+# mavlink start -x -u $udp_offboard_port_local -r 4000000 -f -m onboard -o $udp_offboard_port_remote $mavlink_network_interface_arg
 
-# Onboard link to camera
-mavlink start -x -u $udp_onboard_payload_port_local -r 4000 -f -m onboard -o $udp_onboard_payload_port_remote $mavlink_network_interface_arg
+# Onboard link to camera —— §9 修订: 注释
+# mavlink start -x -u $udp_onboard_payload_port_local -r 4000 -f -m onboard -o $udp_onboard_payload_port_remote $mavlink_network_interface_arg
 
-# Onboard link to gimbal
-mavlink start -x -u $udp_onboard_gimbal_port_local -r 400000 -f -m gimbal -o $udp_onboard_gimbal_port_remote $mavlink_network_interface_arg
+# Onboard link to gimbal —— §9 修订: 注释
+# mavlink start -x -u $udp_onboard_gimbal_port_local -r 400000 -f -m gimbal -o $udp_onboard_gimbal_port_remote $mavlink_network_interface_arg
 
 # To display for SIH sitl
 if [ "$PX4_SIMULATOR" = "sihsim" ]; then
