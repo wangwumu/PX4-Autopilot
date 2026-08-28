@@ -114,7 +114,7 @@ Mavlink::Mavlink() :
 		PX4_ERR("MAV_DEVICE_ID not set: MAVLink link disabled (encryption requires a device ID)");
 	}
 
-	// 修改后协议（60822.0 §1.3）：systemID/componentID 已并入 deviceID，不再独立配置。
+	// 修改后协议（60824.0 §1.3）：systemID/componentID 已并入 deviceID，不再独立配置。
 	// sysid = (deviceID >> 8) & 0xFF, compid = deviceID & 0xFF。从加密层 deviceID 推导，
 	// 保证与对端（QGC）用 deviceID 拆出的 sysid/compid 一致；MAV_SYS_ID/MAV_COMP_ID 不再生效。
 	// （原先用 MAV_SYS_ID 独立判断 target_system，与 deviceID 拆出的 sysid 不一致时
@@ -749,10 +749,13 @@ void Mavlink::send_start(int length)
 	pthread_mutex_lock(&_send_mutex);
 	_last_write_try_time = hrt_absolute_time();
 
-	// payload encryption expands the frame by counter(8) + deviceID(4) + tag(16)
-	// 仅 GCS(Normal) 实例加密（60822.0 §2.5），非 NORMAL 内部链路明文，不预留加密开销
+	// payload encryption expands the frame by counter(8) + deviceID(4) + tag(16)；
+	// 加密心跳还追加 EXT(55B)——按最坏情况预留 OVERHEAD + kExtLen，否则 104B 心跳帧在
+	// TX 缓冲近满时被放行但实际写不下（NuttX UART 阻塞/部分写入）。非心跳消息多预留
+	// 55B 仅使 overrun 判断更保守，安全。
+	// 仅 GCS(Normal) 实例加密（60824.0 §2.5），非 NORMAL 内部链路明文，不预留加密开销
 	const uint32_t crypto_overhead = (_mode == MAVLINK_MODE_NORMAL && MavlinkCrypto::instance().enabled())
-					 ? MavlinkCrypto::OVERHEAD : 0;
+					 ? MavlinkCrypto::OVERHEAD + MavlinkHeartbeatExt::kExtLen : 0;
 
 	// check if there is space in the buffer
 	if (length + (int)crypto_overhead > (int)get_free_tx_buf()) {
@@ -787,7 +790,7 @@ void Mavlink::send_finish()
 		memcpy(trace_frame, _buf, trace_len);
 	}
 
-	// 加密心跳扩展（60822.0）：HEARTBEAT 发送前实时聚合 uORB 基础状态到 EXT，
+	// 加密心跳扩展（60824.0）：HEARTBEAT 发送前实时聚合 uORB 基础状态到 EXT，
 	// encrypt_frame 加密心跳时会拼接到明文后。明文待命心跳（standby）不拼 EXT。
 	if (_buf_fill >= 10 && _buf[0] == MAVLINK_STX) {
 		const uint32_t send_msgid = (uint32_t)_buf[7] | ((uint32_t)_buf[8] << 8) | ((uint32_t)_buf[9] << 16);
@@ -803,17 +806,20 @@ void Mavlink::send_finish()
 
 	// Encrypt the outgoing frame payload (deviceID + AES-256-GCM) — 仅 Normal（GCS
 	// 广域网链路）实例加密；其余所有实例（Onboard/Gimbal 等本机内部链路：companion/
-	// 相机/云台）明文原样发送——接收方无密钥、无需加密。加密范围限定 GCS 与 60822.0
-	// §2.5「加密范围限定（60822.0）」一致，PX4 实现上仅 GCS(Normal) 实例调用 encrypt_frame。
+	// 相机/云台）明文原样发送——接收方无密钥、无需加密。加密范围限定 GCS 与 60824.0
+	// §2.5「加密范围限定（60824.0）」一致，PX4 实现上仅 GCS(Normal) 实例调用 encrypt_frame。
 	uint16_t encrypted_len = (uint16_t)_buf_fill;
 
 	if (_mode == MAVLINK_MODE_NORMAL) {
 		if (!MavlinkCrypto::instance().encrypt_frame(_buf, &encrypted_len)) {
-			// 加密失败丢弃（deviceID 未配置 / nonce 预算耗尽 / GCM 失败 / 非 v2 / 待命非心跳）。
-			// 周期告警：前 20 次逐条、之后每 1024 帧重报一条、加密成功即复位——避免一次性配额
-			// 在持续性故障（deviceID 未配置/预算耗尽/待命不建链）下耗尽后永久静默，重演联调时
-			// "QGC 请求无响应却无日志"；被丢帧不进 trace（log_tx 只在成功路径到达）。
-			if (_buf[0] == MAVLINK_STX) {
+			// 加密失败丢弃。待命态非心跳丢弃（standby non-heartbeat，链路未建只发明文
+			// 心跳）是协议预期行为、非故障：不周期告警、不计数——否则与心跳成功复位
+			// （_enc_fail_count=0）交替会使计数永远到不了 20，逐条告警刷屏。
+			// 真实加密故障（deviceID 未配置 / 预算耗尽 / GCM / 非 v2）：周期告警前 20 次
+			// 逐条、之后每 1024 帧重报一条、成功复位，避免持续性故障下永久静默。
+			const bool standby_drop = MavlinkCrypto::instance().is_standby_drop();
+
+			if (!standby_drop && _buf[0] == MAVLINK_STX) {
 				const uint32_t fail_msgid = (uint32_t)_buf[7] | ((uint32_t)_buf[8] << 8) | ((uint32_t)_buf[9] << 16);
 
 				if (_enc_fail_count < 20 || (_enc_fail_count & 0x3FF) == 0) {
@@ -823,7 +829,10 @@ void Mavlink::send_finish()
 				}
 			}
 
-			_enc_fail_count++;
+			if (!standby_drop) {
+				_enc_fail_count++;
+			}
+
 			count_txerrbytes(_buf_fill);
 			_buf_fill = 0;
 			pthread_mutex_unlock(&_send_mutex);

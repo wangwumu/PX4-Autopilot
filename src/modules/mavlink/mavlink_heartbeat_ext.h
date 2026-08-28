@@ -34,12 +34,13 @@
 /**
  * @file mavlink_heartbeat_ext.h
  *
- * 加密心跳扩展基础状态（EXT）——协议见 docs/docs/60822.0/加密心跳扩展基础状态.md。
+ * 加密心跳扩展基础状态（EXT）——协议见 docs/docs/60824.0/加密心跳扩展基础状态.md。
  *
- * 建链后的加密心跳明文 = deviceID(4B) || HEARTBEAT(9B) || EXT(37B, 小端)。
+ * 建链后的加密心跳明文 = deviceID(4B) || HEARTBEAT(9B) || EXT(55B, 小端)。
  * 明文待命心跳保持 9B 不变。
  *
- * fill():  从 uORB 聚合基础状态（位置/速度/姿态/GPS/电池/模式）序列化为 EXT。
+ * fill():  从 uORB 聚合基础状态（位置/速度/姿态/GPS/电池/模式 + 相对高度/空速/VTOL
+ *          阶段/起降/电流/温度/异常/飞控时间戳）序列化为 EXT。
  * parse(): 将 EXT 解析为可读文本（供联调日志显示）。
  */
 #pragma once
@@ -49,8 +50,8 @@
 
 namespace MavlinkHeartbeatExt
 {
-/** EXT 固定长度：37 字节（见协议 §4 字段表）。 */
-constexpr uint32_t kExtLen = 37;
+/** EXT 固定长度：55 字节（协议见 60824.0 §4 字段表）。 */
+constexpr uint32_t kExtLen = 55;
 
 /**
  * 从 uORB 聚合基础状态并序列化为 EXT（小端，kExtLen 字节）。
@@ -59,7 +60,7 @@ constexpr uint32_t kExtLen = 37;
 bool fill(uint8_t *out, uint32_t out_len);
 
 /**
- * 解析 EXT 为可读文本（lat/lon/alt/vx/vy/vz/roll/pitch/yaw/fix/sat/voltage/rem/nav/arm）。
+ * 解析 EXT 为可读文本（现有 15 字段 + boot/relalt/air/airsrc/vtol/land/curr/temp/fail）。
  * len < kExtLen 时输出 "(EXT 短)"。
  */
 void parse(const uint8_t *ext, uint32_t len, char *out, size_t out_len);

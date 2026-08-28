@@ -36,7 +36,7 @@
  *
  * MAVLink deviceID (32-bit) + payload AES-256-GCM encryption layer.
  *
- * Implements the PX4 side of docs/docs/60822.0/10_deviceID与payload加密公共规范.md:
+ * Implements the PX4 side of docs/docs/60824.0/10_deviceID与payload加密公共规范.md:
  *  - 32-bit deviceID recombined from the frame header bytes (inc/com/sys/comp)
  *  - payload block = counter(8B) || ciphertext || tag(16B), nonce = counter||deviceID
  *  - downlink (PX4 + companion computer) even counters, uplink (QGC) odd counters
@@ -47,6 +47,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "mavlink_heartbeat_ext.h"
 
@@ -71,7 +72,7 @@ public:
 	bool enabled() const { return _device_id != 0; }
 
 	/**
-	 * Read-only access for the companion credential handshake server (docs/docs/60822.0/10_deviceID与payload加密公共规范.md §2.8.7),
+	 * Read-only access for the companion credential handshake server (docs/docs/60824.0/10_deviceID与payload加密公共规范.md §2.8.7),
 	 * so it serves the exact same device ID / key the MAVLink crypto layer uses.
 	 * `key()` copies the 32-byte key into the caller buffer under the lock, so a
 	 * concurrent configure() cannot race with the reader.
@@ -80,7 +81,7 @@ public:
 	void key(uint8_t out[32]) const;
 
 	/**
-	 * 缓存加密心跳的基础状态扩展（EXT，60822.0）。由 mavlink 发送路径在发 HEARTBEAT
+	 * 缓存加密心跳的基础状态扩展（EXT，60824.0）。由 mavlink 发送路径在发 HEARTBEAT
 	 * 前调用（实时聚合 uORB）；encrypt_frame 加密心跳时拼接到明文后。线程安全。
 	 */
 	void set_heartbeat_extension(const uint8_t *ext, uint32_t len);
@@ -114,6 +115,12 @@ public:
 	 * "unknown"）。供发送路径周期告警区分根因（deviceID 未配置 / 预算耗尽 / GCM 失败等）。
 	 */
 	const char *last_error_str() const { return _last_enc_error ? _last_enc_error : "unknown"; }
+
+	/**
+	 * 最近一次 encrypt_frame 失败是否为"待命态丢弃非心跳"（standby 期间只发明文心跳，
+	 * 其余帧按协议预期丢弃，非故障）。供发送路径区分：预期丢弃不周期告警、不计数。
+	 */
+	bool is_standby_drop() const { return strcmp(_last_enc_error ? _last_enc_error : "", "standby non-heartbeat") == 0; }
 
 private:
 	MavlinkCrypto() = default;

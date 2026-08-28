@@ -138,7 +138,7 @@ void MavlinkCrypto::set_heartbeat_extension(const uint8_t *ext, uint32_t len)
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
 	_heartbeat_ext_len = 0;
 
-	// EXT 固定 37B（协议 60822.0 §4）：只接受精确长度，防止短/超长 EXT 上线
+	// EXT 固定 55B（协议 60824.0 §4）：只接受精确长度，防止短/超长 EXT 上线
 	if (ext && len == MavlinkHeartbeatExt::kExtLen) {
 		memcpy(_heartbeat_ext, ext, len);
 		_heartbeat_ext_len = len;
@@ -358,7 +358,7 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 		memcpy(plaintext + 4, payload, orig_len);
 		pt_len = 4 + orig_len;
 
-		// 加密心跳（已建链）：明文追加基础状态 EXT（协议 60822.0）。
+		// 加密心跳（已建链）：明文追加基础状态 EXT（协议 60824.0）。
 		// 明文待命心跳（standby）走 emit_plaintext_heartbeat，不进本分支。
 		if (msgid == MSGID_HEARTBEAT) {
 			pthread_mutex_lock(&g_mavlink_crypto_lock);
@@ -409,6 +409,13 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 
 	// Rebuild the frame with the encrypted payload block = counter(8) || ciphertext || tag(16).
 	const uint16_t new_len = 8 + pt_len + 16;
+
+	if (new_len > MAVLINK_MAX_PAYLOAD_LEN) {
+		// 理论不可达（MAX_PLAIN_PAYLOAD=227 已限 orig_len），但 EXT 加长等改动使
+		// pt_len 增长时，frame[1] 的 uint8 会截断损坏帧——加守卫拒绝而非静默发送坏帧。
+		_last_enc_error = "payload overflow";
+		return false;
+	}
 
 	frame[1] = (uint8_t)new_len;
 	frame[2] = devid_be[0];

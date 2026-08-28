@@ -728,7 +728,7 @@ void MavlinkReceiver::handle_message_command_both(mavlink_message_t *msg, const 
 		// 本分支（send_ack=false）处理无需显式 ACK 的命令。GCS 解密帧（NORMAL 实例）经
 		// decrypt_message 重建后 sysid/compid 恒为 PX4 自身（依 MAV_DEVICE_ID，如 152/1），
 		// GCM 认证 + counter 防重放保证来源可信且新鲜；Onboard/Gimbal 明文命令（内部链路，
-		// 60822.0 §2.5「加密范围限定」）不经解密直接到达——信任模型为本机内部链路可信，
+		// 60824.0 §2.5「加密范围限定」）不经解密直接到达——信任模型为本机内部链路可信，
 		// 无 GCM/防重放，来源是真实 sysid（通常 ≠ PX4），命令按 target 校验放行。若部署
 		// 需更强约束，应在非 NORMAL 实例对 command 类消息增加源白名单。
 		// 注：加密帧不携带源身份（明文仅 deviceID），command_ack 的 target 为 PX4 自身；
@@ -3291,7 +3291,7 @@ MavlinkReceiver::run()
 							}
 
 							// NONCE_SYNC (80004)：Onboard/Gimbal 明文链路无密钥、不再消费（加密仅限
-							// GCS，60822.0 §2.5）。显式识别并限频说明，避免落入 default 静默丢弃——
+							// GCS，60824.0 §2.5）。显式识别并限频说明，避免落入 default 静默丢弃——
 							// 便于联调判断 mavros/companion 是否仍按旧协议在内部链路发送 80004。
 							// 与加密帧丢弃共用 _enc_rx_drop_warn 计数（同周期条件：前 10 逐条、之后每
 							// 1024 条重报一条），统一降噪预算。

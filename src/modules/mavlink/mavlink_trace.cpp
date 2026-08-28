@@ -311,7 +311,7 @@ void MavlinkTrace::parse_content(uint32_t msgid, const uint8_t *payload, uint32_
 			       mavlink_msg_heartbeat_get_base_mode(&msg), mavlink_msg_heartbeat_get_custom_mode(&msg),
 			       mavlink_msg_heartbeat_get_system_status(&msg));
 
-			// 加密心跳扩展（60822.0）：解密后 payload > 9（标准 HEARTBEAT）时解析 EXT 基础状态
+			// 加密心跳扩展（60824.0）：解密后 payload > 9（标准 HEARTBEAT）时解析 EXT 基础状态
 			if (len > 9) {
 				char extbuf[256];
 				MavlinkHeartbeatExt::parse(payload + 9, len - 9, extbuf, sizeof(extbuf));
@@ -497,7 +497,7 @@ void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, 
 	if (msgid == MAVLINK_MSG_ID_HEARTBEAT && !plain) {
 		use_desc = "心跳";
 
-		// 加密心跳扩展（60822.0）：发送日志也显示 EXT 基础状态
+		// 加密心跳扩展（60824.0）：发送日志也显示 EXT 基础状态
 		//（此处为日志时重新 fill，与帧内近似——供日志参考）
 		uint8_t ext[MavlinkHeartbeatExt::kExtLen];
 		char extbuf[256];
