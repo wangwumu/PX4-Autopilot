@@ -234,3 +234,8 @@ param set-default VT_ARSP_BLEND 4
 # 过度超时
 # 过渡开始后 30 秒还没完成 → 放弃，触发 Quad-Chute 切回 MC。** 默认 15 秒
 param set-default VT_TRANS_TIMEOUT 30.0
+
+# 加密握手服务端：应答 abc_vtol 的 device_credential_request（密钥/deviceID 下发）。
+# 若无此行，PX4 侧 device_credential 模块不启动，abc_vtol 握手永不完成、解密流为空
+# （见 docs/docs/60824.0/10_deviceID与payload加密公共规范.md §2.8）。
+device_credential start
