@@ -178,7 +178,19 @@ param set-default NAV_ACC_RAD 5
 # 3 - 降落
 # 5 - 终止
 # 6 - 上锁
-param set-default NAV_DLL_ACT 2
+# 改为 0（无动作）：mavp2p 按协议规范 §2.5 拦截 QGC 的加密心跳后，PX4 在
+# COM_DL_LOSS_T（默认 10 秒）后必然置位 gcs_connection_lost；若仍为 2，该置位会在
+# 任务巡航段触发返航。
+param set-default NAV_DLL_ACT 0
+
+# 数据链丢失豁免的飞行模式
+# bit0 Mission / bit1 Hold / bit2 Offboard
+# 置 1（Mission）：与上面的 NAV_DLL_ACT 0 构成双保险——即便日后 NAV_DLL_ACT 被
+# 改回 2，任务巡航段仍豁免数据链丢失。降落段（dll_loss_ignored_land）与 VTOL 起飞
+# 转平飞段（ignore_any_link_loss_vtol_takeoff_fixedwing）不读本参数即豁免——后者另
+# 有前提 in_forward_flight && !mission_finished（已转平飞且任务未完成）。
+# 注：悬停起飞段与盘旋段读的是 bit1（Hold），需设 3 才覆盖。
+param set-default COM_DLL_EXCEPT 1
 
 # 转换过度时长
 # 从悬停过度到平飞使用时长
