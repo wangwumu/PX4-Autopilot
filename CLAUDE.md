@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-PX4 fork at v1.17.0 with two major in-house customizations (branch `DID4B_Aes`):
+PX4 fork at v1.17.0 with two major in-house customizations (branch `NRRSM`):
 1. **MAVLink 加密层** — 32-bit deviceID + AES-256-GCM payload 加密 + 密钥握手
 2. **ABC VTOL** — 尾座式三旋翼/四旋翼 VTOL 机型与 Gazebo 模型
 
-协议规范的中文文档集中在 `docs/docs/60824.0/`（最新权威版本，见下文「协议文档」），改动清单在 `docs/changes.md`。
+协议规范的中文文档集中在 `docs/docs/60824.0/`（最新权威版本，见下文「协议文档」），改动清单在 `docs/docs/PX4-Autopilot/changes.md`。
 **改加密/握手机制前先读 `docs/docs/60824.0/10_deviceID与payload加密公共规范.md`**——它是各工程共同遵守的权威蓝本，实现须以它为准。
 
 ## Commits & PRs
@@ -96,11 +96,11 @@ PX4_SYS_AUTOSTART=13889 ./build/px4_sitl_default/bin/px4
 
 ## 协议文档（中文，权威）
 
-协议规范以 `docs/docs/60824.0/`（最新版本目录）为准，主 `docs/` 不再维护协议副本：
+协议规范以 `docs/docs/60824.0/`（最新版本目录）为准，本模块自建文档集中在 `docs/docs/PX4-Autopilot/`（`docs/docs` 是指向 `~/abc_common/docs` 的符号链接）：
 - `docs/docs/60824.0/10_deviceID与payload加密公共规范.md` — deviceID + 加密 + 握手总规范（**改协议先读它**）
 - `docs/docs/60824.0/11_deviceID与incompat_flags冲突说明.md` — deviceID 与标准 MAVLink 解析器的兼容约束
 - `docs/docs/60824.0/mavlink_extension_protocol.md`、`docs/docs/60824.0/mavlink_mavros扩展记录.md` — 扩展消息 / mavros 侧对齐
 
-其余变更记录（主 `docs/`）：
-- `docs/fw_offboard_heading_bug_fix.md` — FW offboard 航向不跟随修复（NPFG course → attitude → rate setpoint）
-- `docs/offboard_obstacle_avoidance_uxrce.md`、`docs/changes.md`、`docs/index.md`
+其余变更记录（模块自建文档，见 `docs/docs/PX4-Autopilot/`）：
+- `docs/docs/PX4-Autopilot/fw_offboard_heading_bug_fix.md` — FW offboard 航向不跟随修复（NPFG course → attitude → rate setpoint）
+- `docs/docs/PX4-Autopilot/offboard_obstacle_avoidance_uxrce.md`、`docs/docs/PX4-Autopilot/changes.md`、`docs/index.md`
