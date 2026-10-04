@@ -114,21 +114,28 @@ Mavlink::Mavlink() :
 		PX4_ERR("MAV_DEVICE_ID not set: MAVLink link disabled (encryption requires a device ID)");
 	}
 
-	// 修改后协议（60824.0 §1.3）：systemID/componentID 已并入 deviceID，不再独立配置。
-	// sysid = (deviceID >> 8) & 0xFF, compid = deviceID & 0xFF。从加密层 deviceID 推导，
-	// 保证与对端（QGC）用 deviceID 拆出的 sysid/compid 一致；MAV_SYS_ID/MAV_COMP_ID 不再生效。
+	// 修改后协议（60824.0 §1.3）：systemID 已并入 deviceID，不再独立配置。
+	// sysid = (deviceID >> 8) & 0xFF，从加密层 deviceID 推导；MAV_SYS_ID 不再生效。
 	// （原先用 MAV_SYS_ID 独立判断 target_system，与 deviceID 拆出的 sysid 不一致时
 	//   所有带 target_system 的命令被 PX4 丢弃——参数/命令/任务全部失效。）
+	//
+	// compid 固定 MAV_COMP_ID_AUTOPILOT1，不取 deviceID & 0xFF：§1.3 已写明帧头那 4 个
+	// 字节「均无独立语义」，低 8 位不承载组件语义；而 payload 里的 target_component 是
+	// 标准 MAVLink 字段、各端都按它过滤（本模块 receiver/parameters/mission 共 ~19 处
+	// 判据都以 mavlink_system.compid 为基准）。地面站出站一律填 MAV_COMP_ID_AUTOPILOT1
+	// （QGC ~80 处硬编码），若此处取 deviceID 低字节，则除低字节恰为 1 的编号外，命令/
+	// 参数/任务三条链全被静默丢弃（实测 deviceID=10001048 → compid=152：终端只见
+	// Ignore command 512，任务帧静默丢弃、连日志都没有）。
+	// GCS(Normal) 实例的出站帧头由 MavlinkCrypto::encrypt_frame 显式覆写 deviceID、
+	// 不读 mavlink_system（见 send_finish），故本改动不影响对端的 deviceID 还原与密钥
+	// 查找；仅 Onboard/Gimbal 明文内部链路的帧头 compid 随之变化，其接收方按 sysid 识别。
+	mavlink_system.compid = MAV_COMP_ID_AUTOPILOT1;
+
 	const uint32_t crypto_devid = MavlinkCrypto::instance().device_id();
 	const int sys_id = (int)((crypto_devid >> 8) & 0xFF);
-	const int comp_id = (int)(crypto_devid & 0xFF);
 
 	if (sys_id > 0 && sys_id < 255) {
 		mavlink_system.sysid = sys_id;
-	}
-
-	if (comp_id > 0 && comp_id < 255) {
-		mavlink_system.compid = comp_id;
 	}
 
 	if (_first_start_time == 0) {

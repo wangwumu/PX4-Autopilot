@@ -711,18 +711,27 @@ Commander::Commander() :
 	// default for vtol is rotary wing
 	_vtol_vehicle_status.vehicle_vtol_state = vtol_vehicle_status_s::VEHICLE_VTOL_STATE_MC;
 
-	param_t param_mav_comp_id = param_find("MAV_COMP_ID");
 	param_t param_mav_sys_id = param_find("MAV_SYS_ID");
 	_param_mav_type = param_find("MAV_TYPE");
 	_param_rc_map_fltmode = param_find("RC_MAP_FLTMODE");
 
 	int32_t value_int32 = 0;
 
-	// systemID/componentID 已并入 deviceID（60820.0 10_deviceID与payload加密公共规范.md §1.3）：
-	// sysid=(deviceID>>8)&0xFF, compid=deviceID&0xFF。直接读 MAV_DEVICE_ID 推导，
-	// 与 mavlink_system.sysid/compid 一致。否则 handle_command 的 target_system 检查
-	// 用 MAV_SYS_ID（默认 1），QGC 命令 target_system=（deviceID>>8)&0xFF 全被 commander
-	// 拒绝（含 DO_SET_MODE 模式切换）。
+	// systemID 已并入 deviceID（60824.0 10_deviceID与payload加密公共规范.md §1.3）：
+	// sysid=(deviceID>>8)&0xFF，直接读 MAV_DEVICE_ID 推导，与 mavlink_system.sysid 一致。
+	// 否则 handle_command 的 target_system 检查用 MAV_SYS_ID（默认 1），QGC 命令
+	// target_system=(deviceID>>8)&0xFF 全被 commander 拒绝（含 DO_SET_MODE 模式切换）。
+	//
+	// componentID 不取 deviceID&0xFF，恒为构造函数开头写入的 MAV_COMP_ID_AUTOPILOT1(=1)：
+	// §1.3 把「deviceID 低 8 位」定义为 componentID，但帧头那 4 个字节由加密层整体覆写为
+	// deviceID，payload 里的 target_component 仍是标准 MAVLink 字段，而地面站出站一律填
+	// MAV_COMP_ID_AUTOPILOT1（QGC 侧 91 处，含 Vehicle::_defaultComponentId ← 心跳 compid）。
+	// 两套口径只能取其一：取低字节 ⇒ 除低字节恰为 1 的编号外，地面站命令全被下面
+	// handle_command 的 target_component 检查静默丢弃（实测 deviceID=10001048 → 低字节 152：
+	// MAV_CMD_COMPONENT_ARM_DISARM 被 return false 吃掉，无 ACK、无日志、无事件，地面站只能
+	// 1.5s 超时后报「飞机拒绝解锁」）。此处取 MAV_COMP_ID_AUTOPILOT1，口径与 mavlink_main.cpp
+	// 的 mavlink_system.compid 一致 —— 两处必须同进同退，任一模块单独回退到 deviceID 低字节
+	// 都会重新引入该静默丢弃。
 	param_t param_mav_device_id = param_find("MAV_DEVICE_ID");
 	uint32_t crypto_devid = 0;
 
@@ -730,7 +739,7 @@ Commander::Commander() :
 	    || param_get(param_mav_device_id, &value_int32) != PX4_OK) {
 		// 读取失败：加密层同样读不到 deviceID 会禁用链路（decrypt 全拒），commander
 		// 静默回退会让模式/命令问题无从定位，显式告警。
-		PX4_WARN("MAV_DEVICE_ID read failed; falling back to MAV_SYS_ID/MAV_COMP_ID");
+		PX4_WARN("MAV_DEVICE_ID read failed; falling back to MAV_SYS_ID for system_id");
 
 	} else {
 		crypto_devid = (uint32_t)value_int32;
@@ -738,33 +747,24 @@ Commander::Commander() :
 		// bit24 置位（与 incompat_flags 的 SIGNED 位冲突）视为无效：与 mavlink_credential_load
 		// 一致，加密层会因此禁用链路，commander 侧同样回退，避免两模块对同一参数结论发散。
 		if (crypto_devid & 0x01000000u) {
-			PX4_WARN("invalid MAV_DEVICE_ID 0x%08x (bit24 must be 0); falling back to MAV_SYS_ID/MAV_COMP_ID",
+			PX4_WARN("invalid MAV_DEVICE_ID 0x%08x (bit24 must be 0); falling back to MAV_SYS_ID for system_id",
 				 (unsigned)crypto_devid);
 			crypto_devid = 0;
 		}
 	}
 
 	if (crypto_devid != 0) {
-		// 范围守卫与 mavlink_main.cpp 对齐：sysid/compid ∈ (0,255)，越界保持默认值。
+		// 范围守卫与 mavlink_main.cpp 对齐：sysid ∈ (0,255)，越界保持默认值。
 		const int sys_id = (int)((crypto_devid >> 8) & 0xFF);
-		const int comp_id = (int)(crypto_devid & 0xFF);
 
 		if (sys_id > 0 && sys_id < 255) {
 			_vehicle_status.system_id = sys_id;
 		}
 
-		if (comp_id > 0 && comp_id < 255) {
-			_vehicle_status.component_id = comp_id;
-		}
-
 	} else {
-		// MAV_DEVICE_ID 未配置/无效：回退原 MAV_SYS_ID/MAV_COMP_ID 参数
+		// MAV_DEVICE_ID 未配置/无效：回退原 MAV_SYS_ID 参数（component_id 恒为默认值，见上）
 		if ((param_mav_sys_id != PARAM_INVALID) && (param_get(param_mav_sys_id, &value_int32) == PX4_OK)) {
 			_vehicle_status.system_id = value_int32;
-		}
-
-		if ((param_mav_comp_id != PARAM_INVALID) && (param_get(param_mav_comp_id, &value_int32) == PX4_OK)) {
-			_vehicle_status.component_id = value_int32;
 		}
 	}
 
