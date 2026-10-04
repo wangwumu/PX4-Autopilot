@@ -2,8 +2,9 @@
 # shellcheck disable=SC2154
 
 # 以下 offboard/onboard/gcs 端口变量 —— §9 后仅保留备用:
-#   * GCS 加密实例改用 loopback 端口 14570 硬编码 (bind 14570, 发 127.0.0.1:14540),
-#     仅支持单实例 loopback (px4_instance>0 会端口冲突, 多实例需同步调整 mavros Router fcu_url);
+#   * GCS 加密实例 bind 端口 14570 硬编码，**下行目标**由 PX4_GCS_TARGET 决定（默认
+#     127.0.0.1:14540）；跨机部署（如指向云端 mavp2p）只需设该变量，不必改本文件；
+#     仍仅支持单实例 (px4_instance>0 会端口冲突, 多实例需同步调整 mavros Router fcu_url);
 #   * offboard/camera/gimbal 实例已注释, 恢复时需用对应变量。
 udp_offboard_port_local=$((14580+px4_instance))
 udp_offboard_port_remote=$((14540+px4_instance))
@@ -21,11 +22,18 @@ if [ -n "$PX4_NET_INTERFACE" ]; then
 	# And -p to enable broadcasting on that interface, and not be in localhost mode only.
 	mavlink_network_interface_arg="-n $PX4_NET_INTERFACE -p"
 fi
-mavlink start -x -u 14570 -o 14540 -t 127.0.0.1 -r 4000000   # §9: mavros Router 加密链路 (bind 14570 收, 加密发 127.0.0.1:14540; -x=MAVLink FTP, 保留 QGC 日志/文件下载)
+# 下行目标：默认本机 mavros Router；设 PX4_GCS_TARGET=<host>:<port> 指向远端 mavp2p
+# （云端 mavp2p 即 39.97.235.226:5600）。MavlinkCrypto 只加密 payload、帧头 deviceID
+# 原样保留，故远端 mavp2p 仍能按 deviceID 路由与写 FIFO，无需在本文件里另配密钥。
+PX4_GCS_TARGET="${PX4_GCS_TARGET:-127.0.0.1:14540}"
+gcs_target_host="${PX4_GCS_TARGET%:*}"
+gcs_target_port="${PX4_GCS_TARGET##*:}"
+mavlink start -x -u 14570 -o "$gcs_target_port" -t "$gcs_target_host" -r 4000000   # §9: 加密链路 (bind 14570 收, 加密发 $PX4_GCS_TARGET; -x=MAVLink FTP, 保留 QGC 日志/文件下载)
 # 遥测精简（60822.0）：基础状态并入加密心跳 EXT，心跳覆盖的遥测流全部关闭。
-# 心跳 20Hz：机头指向（EXT yaw）转弯时平滑跟随；VFR_HUD 降频、关 gimbal/扩展状态以降低加密链路 CPU。
+# 心跳 2Hz（2026-09-24 由 20Hz 下调 —— 原 20Hz 的理由是机头指向 EXT yaw 转弯时平滑跟随，
+# 降频后该平滑度随之下降）；VFR_HUD 降频、关 gimbal/扩展状态以降低加密链路 CPU。
 # 仅影响 mavlink 链路；uxrce/DDS、uORB 照常。
-mavlink stream -r 20 -s HEARTBEAT -u 14570
+mavlink stream -r 2 -s HEARTBEAT -u 14570
 mavlink stream -r 0 -s POSITION_TARGET_LOCAL_NED -u 14570
 mavlink stream -r 0 -s LOCAL_POSITION_NED -u 14570
 mavlink stream -r 0 -s GLOBAL_POSITION_INT -u 14570
