@@ -54,9 +54,11 @@ static constexpr uint32_t MAX_PLAIN_PAYLOAD = MAVLINK_MAX_PAYLOAD_LEN - MIN_PAYL
 // a fresh link (new key / re-handshake) — never cross this boundary.
 static constexpr uint64_t COUNTER_MAX = (1ULL << 62);
 
-// §2.5: on link establishment the downlink lastNonce is initialized to X + DOWNLINK_INIT_OFFSET,
-// where X is the first uplink (odd) counter. 1001 is odd, so X+1001 stays even; the +1001 offset
-// gives the downlink sequence a 500-frame lead over the uplink (§2.5 / §3.2.4.2).
+// §2.5: on link establishment the downlink lastNonce is initialized from the first
+// uplink counter X plus DOWNLINK_INIT_OFFSET, giving the downlink a 500-frame lead over
+// the uplink (§2.5 / §3.2.4.2). X's parity is NOT used to judge direction; the base is
+// only normalized into the current downlink lane (even) as a sender-side anti-replay
+// convention, which may evolve.
 static constexpr uint64_t DOWNLINK_INIT_OFFSET = 1001;
 
 // MAVLink message IDs relevant to this layer.
@@ -138,7 +140,7 @@ void MavlinkCrypto::set_heartbeat_extension(const uint8_t *ext, uint32_t len)
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
 	_heartbeat_ext_len = 0;
 
-	// EXT 固定 55B（协议 60824.0 §4）：只接受精确长度，防止短/超长 EXT 上线
+	// EXT 固定 55B（协议 61013.0 §4）：只接受精确长度，防止短/超长 EXT 上线
 	if (ext && len == MavlinkHeartbeatExt::kExtLen) {
 		memcpy(_heartbeat_ext, ext, len);
 		_heartbeat_ext_len = len;
@@ -195,18 +197,10 @@ bool MavlinkCrypto::next_tx_counter(uint64_t &counter)
 
 bool MavlinkCrypto::on_nonce_sync(uint64_t counter)
 {
-	// Downlink counters are always even (PX4 +2, abc_vtol +100). Reject odd
-	// counters: a forged odd NONCE_SYNC would drive the downlink base odd, so the
-	// next +2 counter would collide with the uplink odd sequence (nonce reuse).
-	if (counter & 1ULL) {
-		if (!_warned_nonce_sync_odd) {
-			_warned_nonce_sync_odd = true;
-			PX4_ERR("mavlink_crypto: rejecting odd NONCE_SYNC counter");
-		}
-
-		return false;
-	}
-
+	// NONCE_SYNC is inherently downlink (mavros only syncs the shared downlink
+	// sequence). Do NOT validate parity: counter parity is a sender-side anti-replay
+	// convention that may evolve, not a direction or validity signal. Only the
+	// monotonic / budget checks below apply.
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
 
 	// Only meaningful once linked (the downlink base exists). Raising the base
@@ -226,6 +220,12 @@ bool MavlinkCrypto::on_nonce_sync(uint64_t counter)
 		}
 
 		_tx_last_nonce = counter;
+
+		// Normalize into the current downlink lane (even) without rejecting the
+		// sync value. This is sender-side lane discipline, not a direction judgment.
+		if (_tx_last_nonce & 1ULL) {
+			_tx_last_nonce++;
+		}
 	}
 
 	pthread_mutex_unlock(&g_mavlink_crypto_lock);
@@ -358,7 +358,7 @@ bool MavlinkCrypto::encrypt_frame(uint8_t *frame, uint16_t *total_len)
 		memcpy(plaintext + 4, payload, orig_len);
 		pt_len = 4 + orig_len;
 
-		// 加密心跳（已建链）：明文追加基础状态 EXT（协议 60824.0）。
+		// 加密心跳（已建链）：明文追加基础状态 EXT（协议 61013.0）。
 		// 明文待命心跳（standby）走 emit_plaintext_heartbeat，不进本分支。
 		if (msgid == MSGID_HEARTBEAT) {
 			pthread_mutex_lock(&g_mavlink_crypto_lock);
@@ -470,8 +470,8 @@ bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg, bool *consumed)
 		// value on the (little-endian) targets PX4 runs on.
 		const uint64_t counter = ((const uint64_t *)_MAV_PAYLOAD(msg))[0];
 
-		// 仅当 counter 被接受（偶数且在预算内）时标记 consumed；被拒绝的
-		// NONCE_SYNC（device 不匹配/过短/奇数/超预算）保持 false，供调用方区分。
+		// 仅当 counter 被接受（严格递增且在预算内；不校验奇偶）时标记 consumed；
+		// 被拒绝的 NONCE_SYNC（device 不匹配/过短/未递增/超预算）保持 false，供调用方区分。
 		if (on_nonce_sync(counter)) {
 			if (consumed) {
 				*consumed = true;
@@ -530,8 +530,9 @@ bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg, bool *consumed)
 
 	// Commit the nonce, re-checking under the lock so that a frame which went
 	// stale during the (slow) GCM auth above is rejected rather than delivered.
-	// Also establish the link on the first valid encrypted uplink frame (odd
-	// counter X from QGC): the downlink base becomes X + DOWNLINK_INIT_OFFSET (§2.5).
+	// Also establish the link on the first valid encrypted uplink frame X (any
+	// parity — direction comes from the GCS-ingress instance, never from the
+	// counter): the downlink base becomes X + DOWNLINK_INIT_OFFSET (§2.5).
 	// (§2.9 断连机制 will later reset these nonce fields to return to standby.)
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
 	const bool still_fresh = !_rx_last_nonce_set || (counter > _rx_last_nonce);
@@ -540,10 +541,16 @@ bool MavlinkCrypto::decrypt_message(mavlink_message_t *msg, bool *consumed)
 		_rx_last_nonce = counter;
 		_rx_last_nonce_set = true;
 
-		if (!_tx_last_nonce_set && (counter & 1ULL)) {
-			// Link established on the first uplink odd counter X. Downlink base =
-			// X + DOWNLINK_INIT_OFFSET (even, gives downlink a lead over uplink, §2.5).
-			_tx_last_nonce = counter + DOWNLINK_INIT_OFFSET;
+		if (!_tx_last_nonce_set) {
+			// Downlink base = X + DOWNLINK_INIT_OFFSET, normalized into the
+			// current downlink lane (even). X's parity is not a direction signal.
+			uint64_t base = counter + DOWNLINK_INIT_OFFSET;
+
+			if (base & 1ULL) {
+				base++;
+			}
+
+			_tx_last_nonce = base;
 			_tx_last_nonce_set = true;
 		}
 	}

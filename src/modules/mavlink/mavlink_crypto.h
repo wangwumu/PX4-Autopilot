@@ -36,12 +36,13 @@
  *
  * MAVLink deviceID (32-bit) + payload AES-256-GCM encryption layer.
  *
- * Implements the PX4 side of docs/docs/60824.0/10_deviceID与payload加密公共规范.md:
+ * Implements the PX4 side of docs/docs/61013.0/10_deviceID与payload加密公共规范.md:
  *  - 32-bit deviceID recombined from the frame header bytes (inc/com/sys/comp)
  *  - payload block = counter(8B) || ciphertext || tag(16B), nonce = counter||deviceID
- *  - downlink (PX4 + companion computer) even counters, uplink (QGC) odd counters
+ *  - current sender convention: downlink (PX4 + companion) even, uplink (QGC) odd;
+ *    parity is an anti-replay lane split that may evolve — never a direction signal
  *  - standby plaintext HEARTBEAT beacon until the link is established
- *  - NONCE_SYNC (msgid=80004) syncs the shared downlink counter
+ *  - NONCE_SYNC (msgid=80004) syncs the shared downlink counter (no parity check)
  */
 #pragma once
 
@@ -72,7 +73,7 @@ public:
 	bool enabled() const { return _device_id != 0; }
 
 	/**
-	 * Read-only access for the companion credential handshake server (docs/docs/60824.0/10_deviceID与payload加密公共规范.md §2.8.7),
+	 * Read-only access for the companion credential handshake server (docs/docs/61013.0/10_deviceID与payload加密公共规范.md §2.8.7),
 	 * so it serves the exact same device ID / key the MAVLink crypto layer uses.
 	 * `key()` copies the 32-byte key into the caller buffer under the lock, so a
 	 * concurrent configure() cannot race with the reader.
@@ -81,7 +82,7 @@ public:
 	void key(uint8_t out[32]) const;
 
 	/**
-	 * 缓存加密心跳的基础状态扩展（EXT，60824.0）。由 mavlink 发送路径在发 HEARTBEAT
+	 * 缓存加密心跳的基础状态扩展（EXT，61013.0）。由 mavlink 发送路径在发 HEARTBEAT
 	 * 前调用（实时聚合 uORB）；encrypt_frame 加密心跳时拼接到明文后。线程安全。
 	 */
 	void set_heartbeat_extension(const uint8_t *ext, uint32_t len);
@@ -102,8 +103,9 @@ public:
 	 * Returns false if the frame must be dropped (plaintext / wrong device / replay /
 	 * tampered / degraded empty frame / consumed NONCE_SYNC control frame).
 	 * For NONCE_SYNC (msgid 80004), `consumed` (if non-null) is set true only when the
-	 * sync was accepted (device matched, len>=8, even counter within budget); rejections
-	 * leave it false so callers can distinguish consumed-from-failed.
+	 * sync was accepted (device matched, len>=8, strictly increasing counter within
+	 * budget); parity is not checked. Rejections leave it false so callers can
+	 * distinguish consumed-from-failed.
 	 */
 	bool decrypt_message(mavlink_message_t *msg, bool *consumed = nullptr);
 
@@ -134,7 +136,7 @@ private:
 	 */
 	bool next_tx_counter(uint64_t &counter);
 
-	/** Raise the downlink base from a NONCE_SYNC counter (max, post-link only). Returns false if rejected (odd / >= budget). */
+	/** Raise the downlink base from a NONCE_SYNC counter (max, post-link only). Returns false if rejected (>= budget); parity is not checked. */
 	bool on_nonce_sync(uint64_t counter);
 
 	/** Emit the standby plaintext HEARTBEAT beacon (deviceID in header, no crypto). */
@@ -173,7 +175,6 @@ private:
 	bool _warned_binding_failed{false};
 	bool _warned_empty_frame{false};
 	bool _warned_standby_drop{false};
-	bool _warned_nonce_sync_odd{false};
 	uint32_t _warned_oversized_msgid{0}; ///< 超限退化帧最近警告过的 msgid（限频，避免大消息刷屏）
 	uint32_t _drop_count{0};
 };
