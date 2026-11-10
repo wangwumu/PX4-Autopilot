@@ -40,6 +40,9 @@
 #include <uORB/topics/health_report.h>
 #include <px4_platform_common/events.h>
 
+// base 三掩码与加密心跳 EXT 的 sensors_health 共用同一份实现（见该头文件注释）。
+#include "../mavlink_sys_status_bits.h"
+
 class MavlinkStreamSysStatus : public MavlinkStream
 {
 public:
@@ -66,24 +69,8 @@ private:
 
 	using health_component_t = events::px4::enums::health_component_t;
 
-	void fillOutComponent(const health_report_s &health_report, MAV_SYS_STATUS_SENSOR mav_sensor,
-			      health_component_t health_component, mavlink_sys_status_t &msg)
-	{
-		if (health_report.health_is_present_flags & (uint64_t)health_component) {
-			msg.onboard_control_sensors_present |= mav_sensor;
-		}
-
-		if (((health_report.arming_check_error_flags | health_report.arming_check_warning_flags |
-		      health_report.health_error_flags | health_report.health_warning_flags) & (uint64_t)health_component) == 0) {
-			msg.onboard_control_sensors_health |= mav_sensor;
-		}
-
-		// Set as enabled if present or unhealthy (required, but missing)
-		if ((msg.onboard_control_sensors_present & mav_sensor) || (msg.onboard_control_sensors_health & mav_sensor) == 0) {
-			msg.onboard_control_sensors_enabled |= mav_sensor;
-		}
-	}
-
+	// base 位（MAV_SYS_STATUS_SENSOR）由 MavlinkSysStatusBits::build_base_sensor_bits 统一填，
+	// 这里只保留 extended 的重载；别再为 base 位加第二份实现（会与 EXT 分叉）。
 	void fillOutComponent(const health_report_s &health_report, MAV_SYS_STATUS_SENSOR_EXTENDED mav_sensor,
 			      health_component_t health_component, mavlink_sys_status_t &msg)
 	{
@@ -137,31 +124,16 @@ private:
 
 			mavlink_sys_status_t msg{};
 
-			if (health_report.can_arm_mode_flags & (1u << status.nav_state)) {
-				msg.onboard_control_sensors_health |= MAV_SYS_STATUS_PREARM_CHECK;
-				// 预检启用也应在 enabled 位（标准 MAVLink 语义：enabled=需要/运行的检查项）。
-				// 仅设 health 时，QGC 的 readyToFlyAvailable（检查 enabled & PREARM_CHECK）
-				// 不生效，会退到 allSensorsHealthy 分支判定就绪。
-				msg.onboard_control_sensors_enabled |= MAV_SYS_STATUS_PREARM_CHECK;
-			}
+			// base 三掩码与加密心跳 EXT 的 sensors_health 共用实现，保证两个来源逐位一致
+			// （见 mavlink_sys_status_bits.h）。extended 位仍在下面单独填——
+			// RECOVERY_SYSTEM 是独立位域，不能混进 base。
+			const MavlinkSysStatusBits::SensorBitFlags base_bits =
+				MavlinkSysStatusBits::build_base_sensor_bits(health_report, status.nav_state);
+			msg.onboard_control_sensors_present |= base_bits.present;
+			msg.onboard_control_sensors_enabled |= base_bits.enabled;
+			msg.onboard_control_sensors_health |= base_bits.health;
 
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_BATTERY, health_component_t::battery, msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_MOTOR_OUTPUTS, health_component_t::motors_escs, msg);
 			fillOutComponent(health_report, MAV_SYS_STATUS_RECOVERY_SYSTEM, health_component_t::parachute, msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_3D_ACCEL, health_component_t::accel, msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_3D_GYRO, health_component_t::gyro, msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_3D_MAG, health_component_t::magnetometer, msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_GPS, health_component_t::gps, msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_RC_RECEIVER, health_component_t::remote_control, msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_ATTITUDE_STABILIZATION, health_component_t::attitude_estimate,
-					 msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_XY_POSITION_CONTROL, health_component_t::local_position_estimate,
-					 msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_AHRS, health_component_t::attitude_estimate, msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_LOGGING, health_component_t::logging, msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_ABSOLUTE_PRESSURE, health_component_t::absolute_pressure, msg);
-			fillOutComponent(health_report, MAV_SYS_STATUS_SENSOR_DIFFERENTIAL_PRESSURE, health_component_t::differential_pressure,
-					 msg);
 
 			msg.load = cpuload.load * 1000.0f;
 

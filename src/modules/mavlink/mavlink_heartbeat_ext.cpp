@@ -43,20 +43,32 @@
 #include <string.h>
 
 #include <uORB/Subscription.hpp>
+#include <uORB/SubscriptionMultiArray.hpp>
 #include <uORB/topics/airspeed_validated.h>
 #include <uORB/topics/battery_status.h>
+#include <uORB/topics/cpuload.h>
+#include <uORB/topics/health_report.h>
 #include <uORB/topics/home_position.h>
 #include <uORB/topics/sensor_gps.h>
+#include <uORB/topics/sensor_selection.h>
 #include <uORB/topics/vehicle_air_data.h>
 #include <uORB/topics/vehicle_attitude.h>
 #include <uORB/topics/vehicle_global_position.h>
+#include <uORB/topics/vehicle_imu_status.h>
 #include <uORB/topics/vehicle_land_detected.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/vtol_vehicle_status.h>
 
+// sensors_health 与 SYS_STATUS 报文共用同一份 base 掩码构建（header-only，无 CMake 改动）。
+#include "mavlink_sys_status_bits.h"
+
 namespace MavlinkHeartbeatExt
 {
+
+// 保留区 = offset 72..83 固定 12B；下面按字面 12 清零，用本断言把常量与偏移钉在一起
+// （若将来 kExtLen 被改小，`kExtLen - 72` 会无符号下溢成超大 memset）。
+static_assert(kExtLen == 84, "EXT 84B 的 reserved 区固定为 offset 72-83（12B）");
 
 // ── 小端序列化辅助 ──────────────────────────────────────────────
 static void put_u8(uint8_t *p, uint8_t v) { p[0] = v; }
@@ -91,9 +103,27 @@ static void put_u32(uint8_t *p, uint32_t v)
 	p[3] = (uint8_t)(v >> 24);
 }
 
+static void put_u64(uint8_t *p, uint64_t v)
+{
+	for (int i = 0; i < 8; i++) {
+		p[i] = (uint8_t)(v >> (8 * i));
+	}
+}
+
 static uint32_t get_u32(const uint8_t *p)
 {
 	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static uint64_t get_u64(const uint8_t *p)
+{
+	uint64_t v = 0;
+
+	for (int i = 0; i < 8; i++) {
+		v |= (uint64_t)p[i] << (8 * i);
+	}
+
+	return v;
 }
 
 static int16_t get_s16(const uint8_t *p)
@@ -116,6 +146,36 @@ static float get_f32(const uint8_t *p)
 	float f;
 	memcpy(&f, p, 4);
 	return f;
+}
+
+// 振动等级（3 bit，0–7）：0 = NaN/未知；1..7 = <10 / 10–20 / 20–30 / 30–45 / 45–60 /
+// 60–100 / ≥100。阈值与协议 61013.0 §4.1.1 及 PX4 经验阈值 30/60 对齐。
+static uint8_t vib_level(float metric)
+{
+	if (!PX4_ISFINITE(metric) || metric < 0.f) {
+		return 0;
+	}
+
+	if (metric < 10.f) {
+		return 1;
+
+	} else if (metric < 20.f) {
+		return 2;
+
+	} else if (metric < 30.f) {
+		return 3;
+
+	} else if (metric < 45.f) {
+		return 4;
+
+	} else if (metric < 60.f) {
+		return 5;
+
+	} else if (metric < 100.f) {
+		return 6;
+	}
+
+	return 7; // 钳到 7，不回绕
 }
 
 // 保护静态 uORB 订阅的跨 MAVLink 实例并发访问（多实例各线程调用 fill）
@@ -141,6 +201,10 @@ bool fill(uint8_t *out, uint32_t out_len)
 	static uORB::Subscription home_sub{ORB_ID(home_position)};
 	static uORB::Subscription land_sub{ORB_ID(vehicle_land_detected)};
 	static uORB::Subscription air_data_sub{ORB_ID(vehicle_air_data)};
+	static uORB::Subscription cpuload_sub{ORB_ID(cpuload)};
+	static uORB::Subscription health_sub{ORB_ID(health_report)};
+	static uORB::Subscription sensor_sel_sub{ORB_ID(sensor_selection)};
+	static uORB::SubscriptionMultiArray<vehicle_imu_status_s, 3> imu_status_subs{ORB_ID::vehicle_imu_status};
 
 	vehicle_global_position_s vgp{};
 	vehicle_local_position_s vlp{};
@@ -153,6 +217,9 @@ bool fill(uint8_t *out, uint32_t out_len)
 	home_position_s home{};
 	vehicle_land_detected_s land_det{};
 	vehicle_air_data_s air_data{};
+	cpuload_s cpuload{};
+	health_report_s health_report{};
+	sensor_selection_s sensor_sel{};
 
 	// 捕获 copy 返回值：lat/lon/alt/vx/vy/vz 依赖 vgp/vlp 已发布——topic 未发布时零初始化的
 	// 0.0f 会被 PX4_ISFINITE 放行成假 0，启动窗口会发 (0°N,0°E,0m) 假位置（协议 §4 要求
@@ -170,6 +237,11 @@ bool fill(uint8_t *out, uint32_t out_len)
 	home_sub.copy(&home);
 	land_sub.copy(&land_det);
 	const bool air_data_pub = air_data_sub.copy(&air_data);
+	// 60825：未发布的 topic 必须与「有效 0」区分——cpuload 未发布时 load 要写 255（未知），
+	// 不能写 0（CPU 空转）；health_report 未发布时 sensors_health 要写全健康而非全故障。
+	const bool cpuload_pub = cpuload_sub.copy(&cpuload);
+	const bool health_pub = health_sub.copy(&health_report);
+	const bool sensor_sel_pub = sensor_sel_sub.copy(&sensor_sel);
 
 	uint8_t *p = out;
 
@@ -270,13 +342,123 @@ bool fill(uint8_t *out, uint32_t out_len)
 				      | (uint8_t)((status.failure_detector_status & 0x3Fu) << 2);
 	put_u8(p + 54, failsafe_bits);
 
+	// ── 60825.0 新增字段（offset 55–83，追加尾部，向后兼容）──────────────────
+
+	// GPS UTC（µs，UNIX epoch）；0 = 未定位/未同步（协议 §4.1）。接收方不得用 0 判新鲜度。
+	put_u64(p + 55, gps.time_utc_usec);
+
+	// 传感器健康位：与 SYS_STATUS 的 base 掩码共用同一构建函数，再对未映射位补 1
+	// （bit31 不置）。MAVLink 语义里 0 = 全部传感器故障，未知/未就绪时禁止写 0。
+	uint32_t sensors_health = 0x7FFFFFFFu;
+
+	if (health_pub) {
+		sensors_health = MavlinkSysStatusBits::build_base_sensor_bits(health_report, status.nav_state).health;
+		sensors_health |= (~MavlinkSysStatusBits::kBaseMappedMask) & 0x7FFFFFFFu;
+	}
+
+	put_u32(p + 63, sensors_health);
+
+	// CPU 负载 %：cpuload.load 是 0–1；未发布 → 255（未知）。取整后钳 0–100。
+	uint8_t load_pct = 255;
+
+	if (cpuload_pub && PX4_ISFINITE(cpuload.load)) {
+		const float pct = roundf(cpuload.load * 100.f);
+		load_pct = (uint8_t)(pct < 0.f ? 0.f : (pct > 100.f ? 100.f : pct));
+	}
+
+	put_u8(p + 67, load_pct);
+
+	// GNSS 自检故障位（bit0–6；bit7 保留写 0）
+	put_u8(p + 68, (uint8_t)(gps.system_error & 0x7Fu));
+
+	// GNSS 四状态各 2 bit：jam(0–1) / spoof(2–3) / auth(4–5) / raim(6–7)。
+	// authentication_state 有第 5 值 DISABLED=4，2 bit 放不下 → 钳到 3（协议 §4.1.2）。
+	// raim_state 当前 PX4 无来源，恒 0（UNKNOWN）。
+	uint8_t auth = gps.authentication_state;
+
+	if (auth > 3) {
+		auth = 3;
+	}
+
+	const uint8_t gnss_states = (uint8_t)((gps.jamming_state & 0x03u)
+					      | ((gps.spoofing_state & 0x03u) << 2)
+					      | (auth << 4));
+	put_u8(p + 69, gnss_states);
+
+	// 振动：只取被选中的主 IMU（sensor_selection.accel_device_id）对应的
+	// vehicle_imu_status。三轴语义按 VIBRATION 的 PX4 自定义：x=陀螺锥形运动、
+	// y=陀螺高频、z=加速度计高频（不是加速度，不能标 m/s²）。
+	vehicle_imu_status_s imu_status{};
+	bool imu_found = false;
+
+	if (sensor_sel_pub && sensor_sel.accel_device_id != 0) {
+		for (int i = 0; i < imu_status_subs.size(); i++) {
+			vehicle_imu_status_s candidate{};
+
+			if (imu_status_subs[i].copy(&candidate)
+			    && candidate.accel_device_id == sensor_sel.accel_device_id) {
+				imu_status = candidate;
+				imu_found = true;
+				break;
+			}
+		}
+	}
+
+	uint8_t vib_x = 0;
+	uint8_t vib_y = 0;
+	uint8_t vib_z = 0;
+	uint8_t vib_clip = 0;
+	bool vib_valid = false;
+
+	if (imu_found) {
+		// 先判有效性再取等级：协议 §4.1.1 规定 vib_valid=0 时三轴等级与 clip 一律不可采信。
+		// IMU 停更超过 1s 时 copy() 仍会返回最后一份数据，若先算等级，就会把陈旧的
+		// 1–7 档连同 vib_valid=0 一起发出去——接收方要么误用，要么只能整段丢弃。
+		// 故无效时三轴与 clip 一律写 0（=未知），不做「带陈旧值 + 标记无效」的表达。
+		vib_valid = hrt_elapsed_time(&imu_status.timestamp) < 1'000'000
+			    && PX4_ISFINITE(imu_status.delta_angle_coning_metric)
+			    && PX4_ISFINITE(imu_status.gyro_vibration_metric)
+			    && PX4_ISFINITE(imu_status.accel_vibration_metric);
+
+		if (vib_valid) {
+			vib_x = vib_level(imu_status.delta_angle_coning_metric);
+			vib_y = vib_level(imu_status.gyro_vibration_metric);
+			vib_z = vib_level(imu_status.accel_vibration_metric);
+
+			// 削顶按轴记录布尔语义（累计计数只用于判 > 0）
+			if (imu_status.accel_clipping[0] > 0) {
+				vib_clip |= 0x01u;
+			}
+
+			if (imu_status.accel_clipping[1] > 0) {
+				vib_clip |= 0x02u;
+			}
+
+			if (imu_status.accel_clipping[2] > 0) {
+				vib_clip |= 0x04u;
+			}
+		}
+	}
+
+	// vib_xy：x(0–2) y(3–5) clip_x(6) clip_y(7)
+	put_u8(p + 70, (uint8_t)(vib_x | (uint8_t)(vib_y << 3)
+				 | ((vib_clip & 0x01u) ? 0x40u : 0u)
+				 | ((vib_clip & 0x02u) ? 0x80u : 0u)));
+	// vib_z_flags：z(0–2) clip_z(3) valid(4) 保留(5–7 = 0)
+	put_u8(p + 71, (uint8_t)(vib_z | ((vib_clip & 0x04u) ? 0x08u : 0u)
+				 | (vib_valid ? 0x10u : 0u)));
+
+	// 保留区 12B：未启用时全 0（不得留栈上垃圾）。长度与 kExtLen 的一致性由文件头
+	// static_assert 保证，这里写字面量避免 `kExtLen - 72` 的无符号下溢。
+	memset(p + 72, 0, 12);
+
 	pthread_mutex_unlock(&s_fill_lock);
 	return true;
 }
 
 void parse(const uint8_t *ext, uint32_t len, char *out, size_t out_len)
 {
-	if (len < kExtLen) {
+	if (len < 37) {
 		snprintf(out, out_len, "(EXT 短 %u)", len);
 		return;
 	}
@@ -297,22 +479,72 @@ void parse(const uint8_t *ext, uint32_t len, char *out, size_t out_len)
 	const uint8_t nav = ext[35];
 	const uint8_t arm = ext[36];
 
-	// 60824.0 新增字段（offset 37–54）
-	const uint32_t boot_ms = get_u32(ext + 37);
-	const int32_t rel_alt = get_s32(ext + 41);
-	const int16_t airspeed = get_s16(ext + 45);
-	const uint8_t airsrc = ext[47];
-	const uint8_t vtol_st = ext[48];
-	const uint8_t landed_bits = ext[49];
-	const int16_t current = get_s16(ext + 50);
-	const int16_t temperature = get_s16(ext + 52);
-	const uint8_t failsafe_bits = ext[54];
+	int n = snprintf(out, out_len,
+			 "lat=%d lon=%d alt=%d vx=%d vy=%d vz=%d roll=%.2f pitch=%.2f yaw=%.2f fix=%u sat=%u volt=%u rem=%d nav=%u arm=%u",
+			 lat, lon, alt, vx, vy, vz, (double)roll, (double)pitch, (double)yaw, fix, sat, volt, rem, nav, arm);
 
-	snprintf(out, out_len,
-		 "lat=%d lon=%d alt=%d vx=%d vy=%d vz=%d roll=%.2f pitch=%.2f yaw=%.2f fix=%u sat=%u volt=%u rem=%d nav=%u arm=%u"
-		 " | boot=%u relalt=%d air=%d airsrc=%u vtol=%u land=%u curr=%d temp=%d fail=%u",
-		 lat, lon, alt, vx, vy, vz, (double)roll, (double)pitch, (double)yaw, fix, sat, volt, rem, nav, arm,
-		 (unsigned)boot_ms, rel_alt, airspeed, airsrc, vtol_st, landed_bits, current, temperature, failsafe_bits);
+	if (n < 0 || (size_t)n >= out_len) {
+		return;
+	}
+
+	// 60824.0 段（offset 37–54）：55B 起才有
+	if (len >= 55) {
+		const uint32_t boot_ms = get_u32(ext + 37);
+		const int32_t rel_alt = get_s32(ext + 41);
+		const int16_t airspeed = get_s16(ext + 45);
+		const uint8_t airsrc = ext[47];
+		const uint8_t vtol_st = ext[48];
+		const uint8_t landed_bits = ext[49];
+		const int16_t current = get_s16(ext + 50);
+		const int16_t temperature = get_s16(ext + 52);
+		const uint8_t failsafe_bits = ext[54];
+
+		n += snprintf(out + n, out_len - n,
+			      " | boot=%u relalt=%d air=%d airsrc=%u vtol=%u land=%u curr=%d temp=%d fail=%u",
+			      (unsigned)boot_ms, rel_alt, airspeed, airsrc, vtol_st, landed_bits, current, temperature, failsafe_bits);
+
+		if (n < 0 || (size_t)n >= out_len) {
+			return;
+		}
+	}
+
+	// 60825.0 段（offset 55–83）：按 63/72/84 分段，旧帧不越界读取
+	if (len >= 63) {
+		const uint64_t utc_us = get_u64(ext + 55);
+		n += snprintf(out + n, out_len - n, " utc=%llu", (unsigned long long)utc_us);
+
+		if (n < 0 || (size_t)n >= out_len) {
+			return;
+		}
+	}
+
+	if (len >= 72) {
+		const uint32_t health = get_u32(ext + 63);
+		const uint8_t load_pct = ext[67];
+		const uint8_t gnss_errors = ext[68];
+		const uint8_t gnss_states = ext[69];
+		const uint8_t vib_xy = ext[70];
+		const uint8_t vib_z_flags = ext[71];
+
+		n += snprintf(out + n, out_len - n,
+			      " | health=0x%08x load=%u gnsserr=0x%02x jam=%u spoof=%u auth=%u raim=%u"
+			      " vib=%u/%u/%u clip=%u/%u/%u vibvalid=%u",
+			      (unsigned)health, load_pct, gnss_errors,
+			      gnss_states & 0x03u, (gnss_states >> 2) & 0x03u,
+			      (gnss_states >> 4) & 0x03u, (gnss_states >> 6) & 0x03u,
+			      vib_xy & 0x07u, (vib_xy >> 3) & 0x07u, vib_z_flags & 0x07u,
+			      (vib_xy >> 6) & 0x01u, (vib_xy >> 7) & 0x01u, (vib_z_flags >> 3) & 0x01u,
+			      (vib_z_flags >> 4) & 0x01u);
+
+		if (n < 0 || (size_t)n >= out_len) {
+			return;
+		}
+	}
+
+	if (len >= 84) {
+		// 保留区只显示版本号字节（reserved[0]）
+		snprintf(out + n, out_len - n, " resv0=%u", ext[72]);
+	}
 }
 
 } // namespace MavlinkHeartbeatExt

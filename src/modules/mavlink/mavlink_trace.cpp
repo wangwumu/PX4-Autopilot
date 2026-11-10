@@ -311,11 +311,17 @@ void MavlinkTrace::parse_content(uint32_t msgid, const uint8_t *payload, uint32_
 			       mavlink_msg_heartbeat_get_base_mode(&msg), mavlink_msg_heartbeat_get_custom_mode(&msg),
 			       mavlink_msg_heartbeat_get_system_status(&msg));
 
-			// 加密心跳扩展（60824.0）：解密后 payload > 9（标准 HEARTBEAT）时解析 EXT 基础状态
+			// 加密心跳扩展（61013.0）：解密后 payload > 9（标准 HEARTBEAT）时解析 EXT 基础状态。
+			// 直接写进 out 尾部，不另开 extbuf（栈预算，见 log_tx 同一注释）。
 			if (len > 9) {
-				char extbuf[256];
-				MavlinkHeartbeatExt::parse(payload + 9, len - 9, extbuf, sizeof(extbuf));
-				APPEND(" | %s", extbuf);
+				APPEND(" | ");
+
+				if (used < remain) {
+					MavlinkHeartbeatExt::parse(payload + 9, len - 9, p + used, remain - used);
+					const size_t ext_used = strlen(p + used);
+					used += ext_used;
+					remain -= ext_used;
+				}
 			}
 
 			break;
@@ -483,7 +489,7 @@ void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, 
 	const uint32_t msgid = (uint32_t)frame[7] | ((uint32_t)frame[8] << 8) | ((uint32_t)frame[9] << 16);
 	const uint32_t devid = MavlinkCrypto::instance().device_id();
 
-	char content[512];
+	char content[768];
 	const char *desc;
 	const char *type;
 	parse_content(msgid, payload, plen, content, sizeof(content), &desc, &type);
@@ -497,15 +503,21 @@ void MavlinkTrace::log_tx(const uint8_t *frame, uint16_t len, uint16_t out_len, 
 	if (msgid == MAVLINK_MSG_ID_HEARTBEAT && !plain) {
 		use_desc = "心跳";
 
-		// 加密心跳扩展（60824.0）：发送日志也显示 EXT 基础状态
-		//（此处为日志时重新 fill，与帧内近似——供日志参考）
+		// 加密心跳扩展（61013.0）：发送日志也显示 EXT 基础状态。
+		// ‼️ `_buf` 是加密前的明文帧，EXT 由 encrypt_frame 拼接、此刻还不在帧里，
+		// 故必须在这里重新 fill 一份；fill 的结果与帧内那份近似（同一时刻的 uORB 快照）。
+		// 直接格式化到 content 尾部（不再开 extbuf[512] 栈缓冲：log_tx 位于 mavlink
+		// 主线程栈上，NuttX 下栈预算很紧）。
 		uint8_t ext[MavlinkHeartbeatExt::kExtLen];
-		char extbuf[256];
 
 		if (MavlinkHeartbeatExt::fill(ext, sizeof(ext))) {
-			MavlinkHeartbeatExt::parse(ext, sizeof(ext), extbuf, sizeof(extbuf));
 			const size_t clen = strlen(content);
-			snprintf(content + clen, sizeof(content) - clen, " | %s", extbuf);
+
+			if (clen + 3 < sizeof(content)) {
+				snprintf(content + clen, sizeof(content) - clen, " | ");
+				const size_t off = strlen(content);
+				MavlinkHeartbeatExt::parse(ext, sizeof(ext), content + off, sizeof(content) - off);
+			}
 		}
 	}
 
@@ -533,7 +545,7 @@ void MavlinkTrace::log_rx(const mavlink_message_t &msg, bool ok, bool plain, con
 		}
 	}
 
-	char content[512];
+	char content[768];
 	const char *desc;
 	const char *type;
 	parse_content(msgid, payload, plen, content, sizeof(content), &desc, &type);

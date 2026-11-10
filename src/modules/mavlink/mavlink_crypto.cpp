@@ -140,7 +140,7 @@ void MavlinkCrypto::set_heartbeat_extension(const uint8_t *ext, uint32_t len)
 	pthread_mutex_lock(&g_mavlink_crypto_lock);
 	_heartbeat_ext_len = 0;
 
-	// EXT 固定 55B（协议 61013.0 §4）：只接受精确长度，防止短/超长 EXT 上线
+	// EXT 固定 84B（协议 61013.0 §4）：只接受精确长度，防止短/超长 EXT 上线
 	if (ext && len == MavlinkHeartbeatExt::kExtLen) {
 		memcpy(_heartbeat_ext, ext, len);
 		_heartbeat_ext_len = len;

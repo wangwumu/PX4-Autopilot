@@ -757,9 +757,9 @@ void Mavlink::send_start(int length)
 	_last_write_try_time = hrt_absolute_time();
 
 	// payload encryption expands the frame by counter(8) + deviceID(4) + tag(16)；
-	// 加密心跳还追加 EXT(55B)——按最坏情况预留 OVERHEAD + kExtLen，否则 104B 心跳帧在
+	// 加密心跳还追加 EXT(84B)——按最坏情况预留 OVERHEAD + kExtLen，否则加密心跳帧在
 	// TX 缓冲近满时被放行但实际写不下（NuttX UART 阻塞/部分写入）。非心跳消息多预留
-	// 55B 仅使 overrun 判断更保守，安全。
+	// 84B 仅使 overrun 判断更保守，安全。
 	// 仅 GCS(Normal) 实例加密（60824.0 §2.5），非 NORMAL 内部链路明文，不预留加密开销
 	const uint32_t crypto_overhead = (_mode == MAVLINK_MODE_NORMAL && MavlinkCrypto::instance().enabled())
 					 ? MavlinkCrypto::OVERHEAD + MavlinkHeartbeatExt::kExtLen : 0;
@@ -797,7 +797,7 @@ void Mavlink::send_finish()
 		memcpy(trace_frame, _buf, trace_len);
 	}
 
-	// 加密心跳扩展（60824.0）：HEARTBEAT 发送前实时聚合 uORB 基础状态到 EXT，
+	// 加密心跳扩展（61013.0）：HEARTBEAT 发送前实时聚合 uORB 基础状态到 EXT，
 	// encrypt_frame 加密心跳时会拼接到明文后。明文待命心跳（standby）不拼 EXT。
 	if (_buf_fill >= 10 && _buf[0] == MAVLINK_STX) {
 		const uint32_t send_msgid = (uint32_t)_buf[7] | ((uint32_t)_buf[8] << 8) | ((uint32_t)_buf[9] << 16);
