@@ -38,6 +38,7 @@
 
 #include <matrix/math.hpp>
 #include <px4_platform_common/defines.h>
+#include <px4_platform_common/time.h>
 #include <drivers/drv_hrt.h>
 #include <stdio.h>
 #include <string.h>
@@ -345,7 +346,30 @@ bool fill(uint8_t *out, uint32_t out_len)
 	// ── 60825.0 新增字段（offset 55–83，追加尾部，向后兼容）──────────────────
 
 	// GPS UTC（µs，UNIX epoch）；0 = 未定位/未同步（协议 §4.1）。接收方不得用 0 判新鲜度。
-	put_u64(p + 55, gps.time_utc_usec);
+	uint64_t gps_utc_usec = gps.time_utc_usec;
+#ifdef CONFIG_ARCH_BOARD_PX4_SITL
+
+	// 仿真环境（SITL）：两条 GPS 源都把 time_utc_usec 写死 0（gz_bridge / sensor_gps_sim），
+	// 而 QGC 用 EXT 的 GPS UTC 判「PX4 重启＝新加密会话」（2026-11-11 裁定）。⇒ SITL 下改取
+	// 宿主机系统 UTC。正式固件（nuttx）编不到这段，仍取真实 GPS 驱动的 UTC。
+	// ⚠️ 只在有定位时填（0 = 未定位是协议语义，不能拿系统时间冒充）；
+	// ⚠️ 合理性下限 2001 年：gz_bridge 启动时会把 CLOCK_REALTIME 设为 gz 仿真时间
+	//    （clockCallback），有 CAP_SYS_TIME 时该调用会成功 ⇒ 读回的是仿真时间（≈1970），
+	//    此时保持 0（fail-closed）而不是发出一个会骗过 QGC 的"新鲜"时间。
+	if ((gps_utc_usec == 0) && (gps.fix_type >= 3)) {
+		struct timespec ts {};
+
+		if (px4_clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+			const uint64_t now_usec = (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+
+			if (now_usec >= 1000000000000000ULL) {
+				gps_utc_usec = now_usec;
+			}
+		}
+	}
+
+#endif
+	put_u64(p + 55, gps_utc_usec);
 
 	// 传感器健康位：与 SYS_STATUS 的 base 掩码共用同一构建函数，再对未映射位补 1
 	// （bit31 不置）。MAVLink 语义里 0 = 全部传感器故障，未知/未就绪时禁止写 0。
