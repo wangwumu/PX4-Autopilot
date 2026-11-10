@@ -114,6 +114,7 @@ param set-default MPC_XY_VEL_I_ACC 4
 param set-default MPC_XY_VEL_D_ACC 0.1
 
 param set-default NAV_ACC_RAD 5
+param set-default NAV_LOITER_RAD 80
 
 # 数据链路断开后的动作
 # 0 - 无动作

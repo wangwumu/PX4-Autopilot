@@ -171,6 +171,7 @@ param set-default MPC_XY_VEL_D_ACC 0.1
 
 # 航点接受半径，即飞机达到航点指定范围内即算到达，自动切下一个航点
 param set-default NAV_ACC_RAD 5
+param set-default NAV_LOITER_RAD 80
 
 # 数据链路断开后的动作
 # 0 - 无动作
